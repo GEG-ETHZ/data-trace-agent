@@ -1,0 +1,13 @@
+{
+  "extends": "markdownlint/style/relaxed",
+  "line-length": false,
+  "MD013": false,
+  "MD060": false,
+  "MD040": {
+    "allowed_languages": ["bash", "shell", "sh", "python", "js", "typescript", "yaml", "json", "toml", "markdown", "text", "mermaid"],
+    "language_only": false
+  },
+  "MD041": false,
+  "no-bare-urls": false,
+  "proper-names": false
+}

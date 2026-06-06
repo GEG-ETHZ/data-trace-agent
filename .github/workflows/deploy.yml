@@ -1,0 +1,58 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - dev
+          - prod
+
+jobs:
+  deploy:
+    name: Deploy to Agent Engine
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'prod' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          ignore-nothing-to-cache: true
+
+      - run: uv sync
+
+      - name: Deploy
+        run: uv run python deployment/deploy.py --env ${{ github.event.inputs.environment || 'prod' }}
+        env:
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION }}
+          GCS_STAGING_BUCKET: ${{ secrets.GCS_STAGING_BUCKET }}
+          AGENT_ENGINE_RESOURCE_NAME: ${{ vars.AGENT_ENGINE_RESOURCE_NAME }}
+          MODEL_PROVIDER: ${{ vars.MODEL_PROVIDER || 'google' }}
+
+      - name: Write deployment summary
+        if: success()
+        run: |
+          echo "## Deployment successful" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Environment:** ${{ github.event.inputs.environment || 'prod' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Resource:**" >> "$GITHUB_STEP_SUMMARY"
+          cat .agent_engine_resource >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "N/A" >> "$GITHUB_STEP_SUMMARY"

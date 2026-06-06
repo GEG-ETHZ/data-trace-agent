@@ -1,0 +1,62 @@
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+gcp-sa-key.json
+.agent_engine_resource
+
+# Python
+__pycache__/
+*.py[codz]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv
+venv/
+env/
+
+# uv
+# uv.lock is committed — do not add it here
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+
+# Ruff
+.ruff_cache/
+
+# Pre-commit
+.pre-commit-cache/
+
+# Node (promptfoo)
+node_modules/
+output.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak

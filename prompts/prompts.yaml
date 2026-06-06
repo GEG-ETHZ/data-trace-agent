@@ -1,0 +1,15 @@
+# Prompt registry — maps agent names to the .md files that compose their system instruction.
+# Files are concatenated in the order listed. Add new agents or prompts here.
+#
+# Usage:
+#   - Add a .md file to prompts/system/ or prompts/tasks/
+#   - Register it under the relevant agent below
+#   - Run `make dev` to verify the agent uses the updated prompt
+
+agents:
+  root_agent:
+    system:
+      - system/base.md
+      - system/safety.md
+    tasks:
+      - tasks/example_task.md

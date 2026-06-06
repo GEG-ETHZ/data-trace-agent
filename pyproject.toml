@@ -1,0 +1,59 @@
+[project]
+name = "data-trace-agent"
+version = "0.1.0"
+description = "An agent that links Git and DVC metadata with direct access to BigQuery and GCS to answer questions about the evolution and content of datasets."
+authors = [
+    {name = "Philipp Schädle", email = "philipp.schaedle@gmail.com"},
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "google-adk>=1.0.0",
+    "google-cloud-aiplatform[agent_engines]>=1.90.0",
+    "litellm>=1.50.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.4.0",
+    "pyright>=1.1.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "pre-commit>=3.7.0",
+    "commitizen>=3.0.0",
+    "pip-audit>=2.7.0",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "N"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=agent --cov-report=term-missing --cov-fail-under=75"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_scheme = "semver"
+tag_format = "v$version"
+update_changelog_on_bump = true
+changelog_incremental = true
+version_files = ["pyproject.toml:^version"]
