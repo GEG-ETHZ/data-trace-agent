@@ -46,6 +46,60 @@ def resolve_model():
             )
 
 
+# Environment variables forwarded verbatim to the deployed Agent Engine runtime
+# (plain values). Credentials/tokens are handled separately in runtime_env_vars().
+_FORWARDED_ENV_VARS = (
+    "REPO_URL",
+    "GIT_AUTH_HOST",
+    "GIT_AUTH_USERNAME",
+    "MODEL_PROVIDER",
+    "LITELLM_MODEL",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+)
+
+
+def _set_secret_or_plain(env: dict, key: str) -> None:
+    """Populate ``env[key]`` from ``<KEY>_SECRET`` (Secret Manager ref, preferred)
+    or a plain ``<KEY>`` value. Does nothing if neither is set."""
+    secret = os.getenv(f"{key}_SECRET")
+    if secret:
+        from google.cloud.aiplatform_v1.types import env_var  # noqa: PLC0415
+
+        env[key] = env_var.SecretRef(
+            secret=secret,
+            version=os.getenv(f"{key}_SECRET_VERSION", "latest"),
+        )
+    elif os.getenv(key):
+        env[key] = os.environ[key]
+
+
+def runtime_env_vars() -> dict:
+    """Build the env-var map passed to the deployed agent at create/update time.
+
+    Forwards a fixed allowlist of variables from the deploy environment so the
+    headless runtime can clone private repos and pull DVC data (no SSH key or
+    DVC credentials there). Sensitive values — the Git auth token
+    (``GIT_AUTH_TOKEN``) and DVC workspace config (``DVC_CONFIG_LOCAL``, used for
+    config-based remotes such as WebDAV) — are supplied either as a Secret
+    Manager reference (preferred, via ``<NAME>_SECRET``) or as a plain value.
+
+    GCS DVC remotes need no value here: the ``gs`` backend authenticates via the
+    runtime service account's Application Default Credentials (see
+    ``DeploymentConfig.service_account``).
+    """
+    env: dict = {}
+    for name in _FORWARDED_ENV_VARS:
+        value = os.getenv(name)
+        if value:
+            env[name] = value
+
+    _set_secret_or_plain(env, "GIT_AUTH_TOKEN")
+    _set_secret_or_plain(env, "DVC_CONFIG_LOCAL")
+
+    return env
+
+
 @dataclass
 class DeploymentConfig:
     project: str
@@ -54,6 +108,7 @@ class DeploymentConfig:
     resource_name: str | None
     agent_display_name: str
     gcs_dir_name: str
+    service_account: str | None
 
     @classmethod
     def from_env(cls) -> "DeploymentConfig":
@@ -66,4 +121,9 @@ class DeploymentConfig:
             # Staging subfolder within the bucket; project-named so artifacts
             # land at <bucket>/data-trace-agent/ instead of the generic default.
             gcs_dir_name=_project_name(),
+            # Service account the deployed agent runs as. Its Application Default
+            # Credentials authenticate DVC's GCS remote pulls, so it needs read
+            # access to the DVC remote bucket(s). Omit to use the Agent Engine
+            # default service account.
+            service_account=os.getenv("AGENT_ENGINE_SERVICE_ACCOUNT") or None,
         )

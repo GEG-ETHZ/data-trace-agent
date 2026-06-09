@@ -95,6 +95,52 @@ def _looks_like_remote_repo(repo_location: str) -> bool:
     )
 
 
+def _split_git_url(url: str) -> tuple[str, str] | None:
+    """Return ``(host, path)`` for an HTTP(S) or scp-style SSH Git URL.
+
+    Returns ``None`` for local paths, and for HTTP(S) URLs that already embed
+    credentials (``user@host``) or a port (``host:443``) — those are left
+    untouched by callers.
+    """
+    normalized = url.lower()
+    if normalized.startswith("http://") or normalized.startswith("https://"):
+        parsed = urllib.parse.urlparse(url)
+        if "@" in parsed.netloc or ":" in parsed.netloc:
+            return None
+        host = parsed.netloc
+        path = parsed.path.lstrip("/")
+        return (host, path) if host and path else None
+
+    # scp-style SSH: git@host:group/repo.git (or any user@host:path)
+    match = re.match(r"^[^@/]+@([^:/]+):(.+)$", url)
+    if match:
+        return match.group(1), match.group(2)
+    return None
+
+
+def _git_token_for_host(host: str) -> tuple[str, str] | None:
+    """Return ``(username, token)`` if a Git auth token is configured for ``host``.
+
+    Reads ``GIT_AUTH_TOKEN`` (the token), ``GIT_AUTH_USERNAME`` (defaults to
+    ``oauth2``), and ``GIT_AUTH_HOST`` (the host the token is valid for). When
+    ``GIT_AUTH_HOST`` is unset it defaults to the host of ``REPO_URL``, so a
+    single token covers the registry and the project repos on the same server.
+    """
+    token = os.getenv("GIT_AUTH_TOKEN")
+    if not token:
+        return None
+
+    configured_host = os.getenv("GIT_AUTH_HOST")
+    if not configured_host:
+        repo_url = os.getenv("REPO_URL")
+        parts = _split_git_url(repo_url) if repo_url else None
+        configured_host = parts[0] if parts else None
+
+    if configured_host and host == configured_host:
+        return os.getenv("GIT_AUTH_USERNAME", "oauth2"), token
+    return None
+
+
 def _to_ssh_url(repo_location: str) -> str:
     """Convert an HTTP(S) Git URL to its SSH (scp-like) form.
 
@@ -106,26 +152,44 @@ def _to_ssh_url(repo_location: str) -> str:
     or specify a port are left unchanged, as are non-HTTP URLs (already SSH,
     local paths, etc.).
     """
-    normalized = repo_location.lower()
-    if not (normalized.startswith("http://") or normalized.startswith("https://")):
+    parts = _split_git_url(repo_location)
+    if parts is None or not repo_location.lower().startswith(("http://", "https://")):
         return repo_location
-
-    parsed = urllib.parse.urlparse(repo_location)
-    # Respect explicitly supplied credentials (e.g. a deploy token) or a port.
-    if "@" in parsed.netloc or ":" in parsed.netloc:
-        return repo_location
-
-    host = parsed.netloc
-    path = parsed.path.lstrip("/")
-    if not host or not path:
-        return repo_location
-
+    host, path = parts
     return f"git@{host}:{path}"
+
+
+def _resolve_clone_url(repo_location: str) -> str:
+    """Rewrite a Git URL for the credentials available in the current runtime.
+
+    - If a token is configured (``GIT_AUTH_TOKEN``) for the URL's host, return an
+      HTTPS URL with the token embedded. This works in headless runtimes such as
+      Vertex AI Agent Engine, which have no SSH key.
+    - Otherwise convert HTTP(S) URLs to their SSH form so local clones use the
+      developer's SSH key.
+
+    Local paths and URLs that already embed credentials or a port are returned
+    unchanged.
+    """
+    parts = _split_git_url(repo_location)
+    if parts is None:
+        return repo_location
+    host, path = parts
+    cred = _git_token_for_host(host)
+    if cred:
+        username, token = cred
+        return f"https://{username}:{token}@{host}/{path}"
+    return _to_ssh_url(repo_location)
+
+
+def _redact_credentials(text: str) -> str:
+    """Mask ``user:token@`` credentials in URLs so tokens never reach output."""
+    return re.sub(r"(https?://)[^/@\s]+@", r"\1***@", text)
 
 
 def _resolve_repository_location(repo_location: str) -> str:
     """Resolve a repository location (local path or remote URL) to an absolute path."""
-    repo_location = _to_ssh_url(repo_location)
+    repo_location = _resolve_clone_url(repo_location)
     candidate = os.path.expanduser(repo_location)
     if os.path.exists(candidate):
         return os.path.abspath(candidate)
@@ -137,12 +201,14 @@ def _resolve_repository_location(repo_location: str) -> str:
         except GitCommandError as exc:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise ValueError(
-                f"Cannot clone remote Git repository at '{repo_location}': {exc}"
+                "Cannot clone remote Git repository at "
+                f"'{_redact_credentials(repo_location)}': "
+                f"{_redact_credentials(str(exc))}"
             ) from exc
         return temp_dir
 
     raise ValueError(
-        f"Cannot resolve repository location '{repo_location}'. "
+        f"Cannot resolve repository location '{_redact_credentials(repo_location)}'. "
         "Provide a local Git repository path or a valid remote Git URL."
     )
 

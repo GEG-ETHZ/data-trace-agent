@@ -139,6 +139,15 @@ Set `MODEL_PROVIDER` in `.env`:
 | `GOOGLE_CLOUD_LOCATION` | Deploy only | `us-central1` | Vertex AI region |
 | `GCS_STAGING_BUCKET` | Deploy only | — | GCS bucket for Agent Engine artefacts |
 | `REPO_URL` | No | — | Remote Git URL of the DVC registry; cloned on first use as the default repository |
+| `GIT_AUTH_TOKEN` | No | — | Git token (deploy token / PAT) for cloning private repos in headless runtimes (no SSH key). When set, repo URLs on the matching host are cloned over token-HTTPS instead of SSH |
+| `GIT_AUTH_HOST` | No | host of `REPO_URL` | Host the `GIT_AUTH_TOKEN` is valid for (e.g. `gitlab.example.com`) |
+| `GIT_AUTH_USERNAME` | No | `oauth2` | Username paired with `GIT_AUTH_TOKEN` in the HTTPS URL |
+| `GIT_AUTH_TOKEN_SECRET` | No | — | Secret Manager secret id for the Git token (preferred over `GIT_AUTH_TOKEN` at deploy; passed to Agent Engine as a `SecretRef`) |
+| `GIT_AUTH_TOKEN_SECRET_VERSION` | No | `latest` | Secret version for `GIT_AUTH_TOKEN_SECRET` |
+| `AGENT_ENGINE_SERVICE_ACCOUNT` | No | Agent Engine default | Service account the deployed agent runs as; its ADC authenticates DVC's GCS remote pulls, so grant it read on the DVC remote bucket(s) |
+| `DVC_CONFIG_LOCAL` | No | — | Verbatim DVC workspace config written to `<repo>/.dvc/config.local` before `dvc pull` — supplies credentials for config-based remotes (WebDAV, SSH). Not needed for GCS (uses ADC) |
+| `DVC_CONFIG_LOCAL_SECRET` | No | — | Secret Manager secret id for `DVC_CONFIG_LOCAL` (preferred at deploy; passed as a `SecretRef`) |
+| `DVC_CONFIG_LOCAL_SECRET_VERSION` | No | `latest` | Secret version for `DVC_CONFIG_LOCAL_SECRET` |
 | `AGENT_ENGINE_RESOURCE_NAME` | No | — | Existing resource to update (omit = create new) |
 | `MODEL_PROVIDER` | No | `google` | Provider selection |
 | `LITELLM_MODEL` | If provider=litellm | — | Full LiteLLM model string |

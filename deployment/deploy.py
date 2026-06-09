@@ -25,14 +25,20 @@ def deploy(env: str) -> None:
     from vertexai import agent_engines
 
     from agent.agent import root_agent
-    from deployment.config import DeploymentConfig
+    from deployment.config import DeploymentConfig, runtime_env_vars
 
     config = DeploymentConfig.from_env()
+    env_vars = runtime_env_vars()
 
     logger.info("Deploying [%s] to Vertex AI Agent Engine", env)
     logger.info("  Project:  %s", config.project)
     logger.info("  Location: %s", config.location)
     logger.info("  Bucket:   %s", config.staging_bucket)
+    if config.service_account:
+        logger.info("  Service account: %s", config.service_account)
+    # Log which env vars are forwarded — never their values (may hold a token).
+    if env_vars:
+        logger.info("  Env vars: %s", ", ".join(sorted(env_vars)))
 
     vertexai.init(
         project=config.project,
@@ -66,6 +72,8 @@ def deploy(env: str) -> None:
             requirements=requirements,
             extra_packages=extra_packages,
             gcs_dir_name=config.gcs_dir_name,
+            env_vars=env_vars or None,
+            service_account=config.service_account,
         )
     else:
         logger.info("  Creating new Agent Engine resource...")
@@ -75,6 +83,8 @@ def deploy(env: str) -> None:
             display_name=config.agent_display_name,
             extra_packages=extra_packages,
             gcs_dir_name=config.gcs_dir_name,
+            env_vars=env_vars or None,
+            service_account=config.service_account,
         )
 
     resource_name = remote_agent.resource_name

@@ -10,6 +10,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Added
 
 - Initial agent scaffold from [agent-deployment-template](https://github.com/GEG-ETHZ/agent-deployment-template)
+- Git authentication for headless runtimes: when `GIT_AUTH_TOKEN` is set, repo
+  URLs on the matching host (`GIT_AUTH_HOST`, defaulting to the `REPO_URL` host)
+  are cloned over token-HTTPS instead of SSH, so the registry and project repos
+  clone on Vertex AI Agent Engine (which has no SSH key). Credentials are
+  redacted from any error output. Deploy forwards a curated env-var allowlist to
+  the runtime and supports the token as a Secret Manager `SecretRef`
+  (`GIT_AUTH_TOKEN_SECRET`) or a plain value
+- DVC remote credentials on headless runtimes: deploy now sets the Agent Engine
+  `service_account` (`AGENT_ENGINE_SERVICE_ACCOUNT`) whose ADC authenticates GCS
+  remote pulls, and `dvc_pull` writes `<repo>/.dvc/config.local` from
+  `DVC_CONFIG_LOCAL` (plain or Secret Manager `SecretRef`) so config-based
+  remotes (WebDAV, SSH) get credentials at runtime without committing them
 - Git/DVC tooling ported from `data-history-agent`: `set_repository`,
   `find_meta_yaml_files`, `find_dvc_files`, `list_projects`,
   `clone_remote_repository`, `get_dvc_md5`, `find_commit_by_hash_string`,

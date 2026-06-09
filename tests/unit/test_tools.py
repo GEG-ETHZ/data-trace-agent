@@ -15,7 +15,10 @@ from google.adk.tools import ToolContext
 from agent.tools import data_tools, git_tools
 from agent.tools.git_tools import (
     _looks_like_remote_repo,
+    _redact_credentials,
     _render_yaml_value,
+    _resolve_clone_url,
+    _split_git_url,
     _to_ssh_url,
 )
 
@@ -116,6 +119,78 @@ def test_to_ssh_url_preserves_embedded_credentials():
 def test_to_ssh_url_preserves_port_and_local_path():
     assert _to_ssh_url("https://host:8443/x.git") == "https://host:8443/x.git"
     assert _to_ssh_url("/local/path/repo") == "/local/path/repo"
+
+
+def test_split_git_url_https_and_ssh():
+    assert _split_git_url("https://gitlab.example.com/group/repo.git") == (
+        "gitlab.example.com",
+        "group/repo.git",
+    )
+    assert _split_git_url("git@gitlab.example.com:group/repo.git") == (
+        "gitlab.example.com",
+        "group/repo.git",
+    )
+
+
+def test_split_git_url_local_path_is_none():
+    assert _split_git_url("/local/path/repo") is None
+
+
+# ---------------------------------------------------------------------------
+# Clone-URL resolution: SSH locally, token-HTTPS in a headless runtime
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_clone_url_no_token_uses_ssh(monkeypatch):
+    monkeypatch.delenv("GIT_AUTH_TOKEN", raising=False)
+    assert (
+        _resolve_clone_url("https://gitlab.example.com/group/repo.git")
+        == "git@gitlab.example.com:group/repo.git"
+    )
+
+
+def test_resolve_clone_url_token_injects_https(monkeypatch):
+    monkeypatch.setenv("GIT_AUTH_TOKEN", "tok")  # pragma: allowlist secret
+    monkeypatch.setenv("GIT_AUTH_HOST", "gitlab.example.com")
+    expected = "https://oauth2:tok@gitlab.example.com/group/repo.git"  # pragma: allowlist secret
+    # Both SSH and HTTPS inputs to the same host become token HTTPS.
+    assert _resolve_clone_url("git@gitlab.example.com:group/repo.git") == expected
+    assert _resolve_clone_url("https://gitlab.example.com/group/repo.git") == expected
+
+
+def test_resolve_clone_url_token_custom_username(monkeypatch):
+    monkeypatch.setenv("GIT_AUTH_TOKEN", "tok")  # pragma: allowlist secret
+    monkeypatch.setenv("GIT_AUTH_HOST", "gitlab.example.com")
+    monkeypatch.setenv("GIT_AUTH_USERNAME", "gitlab-ci-token")
+    assert (
+        _resolve_clone_url("git@gitlab.example.com:g/r.git")
+        == "https://gitlab-ci-token:tok@gitlab.example.com/g/r.git"  # pragma: allowlist secret
+    )
+
+
+def test_resolve_clone_url_token_host_mismatch_falls_back_to_ssh(monkeypatch):
+    monkeypatch.setenv("GIT_AUTH_TOKEN", "tok")  # pragma: allowlist secret
+    monkeypatch.setenv("GIT_AUTH_HOST", "gitlab.example.com")
+    # A different host gets no token — falls back to SSH conversion.
+    assert _resolve_clone_url("https://github.com/o/r.git") == "git@github.com:o/r.git"
+
+
+def test_resolve_clone_url_token_host_defaults_to_repo_url(monkeypatch):
+    monkeypatch.setenv("GIT_AUTH_TOKEN", "tok")  # pragma: allowlist secret
+    monkeypatch.delenv("GIT_AUTH_HOST", raising=False)
+    monkeypatch.setenv("REPO_URL", "https://gitlab.example.com/group/registry.git")
+    assert (
+        _resolve_clone_url("git@gitlab.example.com:group/repo.git")
+        == "https://oauth2:tok@gitlab.example.com/group/repo.git"  # pragma: allowlist secret
+    )
+
+
+def test_redact_credentials_masks_token():
+    redacted = _redact_credentials(
+        "fatal: https://oauth2:supersecret@gitlab.example.com/x.git not found"  # pragma: allowlist secret
+    )
+    assert "supersecret" not in redacted
+    assert "https://***@gitlab.example.com/x.git" in redacted
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +335,34 @@ def test_inspect_yaml_file_missing_returns_error(ctx):
 def test_list_files_in_directory(ctx, git_repo):
     result = data_tools.list_files_in_directory(".", tool_context=ctx)
     assert "foo.dvc" in result
+
+
+def test_apply_dvc_local_config_writes_file(tmp_path, monkeypatch):
+    dvc_dir = tmp_path / ".dvc"
+    dvc_dir.mkdir()
+    monkeypatch.setenv(
+        "DVC_CONFIG_LOCAL",
+        "['remote \"webdav\"']\n    user = u\n    password = p\n",
+    )
+    data_tools._apply_dvc_local_config(str(tmp_path))
+    written = (dvc_dir / "config.local").read_text()
+    assert 'remote "webdav"' in written
+    assert "password = p" in written
+
+
+def test_apply_dvc_local_config_noop_without_env(tmp_path, monkeypatch):
+    dvc_dir = tmp_path / ".dvc"
+    dvc_dir.mkdir()
+    monkeypatch.delenv("DVC_CONFIG_LOCAL", raising=False)
+    data_tools._apply_dvc_local_config(str(tmp_path))
+    assert not (dvc_dir / "config.local").exists()
+
+
+def test_apply_dvc_local_config_noop_without_dvc_dir(tmp_path, monkeypatch):
+    # No .dvc dir → nothing written, no error.
+    monkeypatch.setenv("DVC_CONFIG_LOCAL", "[core]\n    remote = x\n")
+    data_tools._apply_dvc_local_config(str(tmp_path))
+    assert not (tmp_path / ".dvc" / "config.local").exists()
 
 
 def test_inspect_and_analyze_parquet(tmp_path):

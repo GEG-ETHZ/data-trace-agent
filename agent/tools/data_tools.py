@@ -12,6 +12,26 @@ import yaml
 from google.adk.tools import ToolContext
 
 
+def _apply_dvc_local_config(repo_path: str) -> None:
+    """Write DVC workspace (local) config from the ``DVC_CONFIG_LOCAL`` env var.
+
+    Lets credentials for config-based remotes (e.g. WebDAV, SSH) be supplied at
+    runtime — for example on Vertex AI Agent Engine — without committing them.
+    The contents are written verbatim to ``<repo>/.dvc/config.local``, which DVC
+    layers over the repo config and which is git-ignored. GCS remotes do not
+    need this: the ``gs`` backend uses Application Default Credentials (the
+    runtime service account).
+    """
+    config_local = os.getenv("DVC_CONFIG_LOCAL")
+    if not config_local:
+        return
+    dvc_dir = os.path.join(repo_path, ".dvc")
+    if not os.path.isdir(dvc_dir):
+        return
+    with open(os.path.join(dvc_dir, "config.local"), "w") as f:
+        f.write(config_local)
+
+
 def dvc_pull(
     file_path: str | None = None, tool_context: ToolContext | None = None
 ) -> str:
@@ -24,6 +44,8 @@ def dvc_pull(
         repo_path = tool_context.state.get("repo_path")
         if not repo_path:
             return "ERROR: Repository path not set. Please use set_repository first."
+
+        _apply_dvc_local_config(repo_path)
 
         command = [sys.executable, "-m", "dvc", "pull"]
         if file_path:
