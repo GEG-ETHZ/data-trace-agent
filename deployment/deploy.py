@@ -8,8 +8,13 @@ Usage:
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
+
+# Ensure the project root is on the path when run as a script
+# (python deployment/deploy.py puts deployment/ on sys.path, not the root).
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -29,7 +34,11 @@ def deploy(env: str) -> None:
     logger.info("  Location: %s", config.location)
     logger.info("  Bucket:   %s", config.staging_bucket)
 
-    vertexai.init(project=config.project, location=config.location)
+    vertexai.init(
+        project=config.project,
+        location=config.location,
+        staging_bucket=config.staging_bucket,
+    )
 
     requirements = [
         "google-adk>=1.0.0",
@@ -40,11 +49,19 @@ def deploy(env: str) -> None:
         "pyyaml>=6.0",
     ]
 
+    # Local source that must be importable on the remote container. The pickled
+    # agent references agent.tools.* by module path, so the package has to ship
+    # alongside it (the prompts dir travels too for any runtime reads).
+    extra_packages = ["agent", "prompts"]
+
     if config.resource_name:
         logger.info("  Updating: %s", config.resource_name)
         existing = agent_engines.get(config.resource_name)
         remote_agent = existing.update(
-            agent_engine=root_agent, requirements=requirements
+            agent_engine=root_agent,
+            requirements=requirements,
+            extra_packages=extra_packages,
+            gcs_dir_name=config.gcs_dir_name,
         )
     else:
         logger.info("  Creating new Agent Engine resource...")
@@ -52,7 +69,8 @@ def deploy(env: str) -> None:
             agent_engine=root_agent,
             requirements=requirements,
             display_name=config.agent_display_name,
-            gcs_dir_name=config.staging_bucket,
+            extra_packages=extra_packages,
+            gcs_dir_name=config.gcs_dir_name,
         )
 
     resource_name = remote_agent.resource_name
@@ -61,9 +79,15 @@ def deploy(env: str) -> None:
     Path(".agent_engine_resource").write_text(resource_name + "\n")
 
     logger.info("Running smoke test...")
-    response = remote_agent.query(input="ping")  # type: ignore[attr-defined]
-    if not response:
-        logger.error("Smoke test returned an empty response.")
+    # A deployed ADK agent exposes stream_query (a generator of event dicts),
+    # not query. Drain it and require at least one event back.
+    events = list(
+        remote_agent.stream_query(  # type: ignore[attr-defined]
+            message="ping", user_id="smoke-test"
+        )
+    )
+    if not events:
+        logger.error("Smoke test returned no events.")
         sys.exit(1)
     logger.info("Smoke test passed.")
 

@@ -1,9 +1,18 @@
 import os
+import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def _project_name() -> str:
+    """Read the project name from pyproject.toml so derived names stay in sync."""
+    pyproject = Path(__file__).parent.parent / "pyproject.toml"
+    with open(pyproject, "rb") as f:
+        return tomllib.load(f)["project"]["name"]
 
 
 def resolve_model():
@@ -44,6 +53,7 @@ class DeploymentConfig:
     staging_bucket: str
     resource_name: str | None
     agent_display_name: str
+    gcs_dir_name: str
 
     @classmethod
     def from_env(cls) -> "DeploymentConfig":
@@ -53,4 +63,7 @@ class DeploymentConfig:
             staging_bucket=os.environ["GCS_STAGING_BUCKET"],
             resource_name=os.getenv("AGENT_ENGINE_RESOURCE_NAME") or None,
             agent_display_name="Data Trace Agent",
+            # Staging subfolder within the bucket; project-named so artifacts
+            # land at <bucket>/data-trace-agent/ instead of the generic default.
+            gcs_dir_name=_project_name(),
         )
