@@ -1,5 +1,6 @@
 # Prompt registry — maps agent names to the .md files that compose their system instruction.
-# Files are concatenated in the order listed. Add new agents or prompts here.
+# Files are concatenated in the order listed (system first, then tasks). Add new
+# agents or prompts here.
 #
 # Usage:
 #   - Add a .md file to prompts/system/ or prompts/tasks/
@@ -12,4 +13,25 @@ agents:
       - system/base.md
       - system/safety.md
     tasks:
-      - tasks/example_task.md
+      - tasks/root_agent.md
+
+  metadata_agent:
+    system:
+      - system/base.md
+      - system/safety.md
+    tasks:
+      - tasks/metadata.md
+
+  code_analysis_agent:
+    system:
+      - system/base.md
+      - system/safety.md
+    tasks:
+      - tasks/code_analysis.md
+
+  data_analysis_agent:
+    system:
+      - system/base.md
+      - system/safety.md
+    tasks:
+      - tasks/data_analysis.md

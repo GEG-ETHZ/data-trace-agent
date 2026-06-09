@@ -1,0 +1,242 @@
+"""
+Tools for data analysis, including DVC and Parquet file operations.
+"""
+
+import io
+import os
+import subprocess
+import sys
+
+import pandas as pd
+import yaml
+from google.adk.tools import ToolContext
+
+
+def dvc_pull(
+    file_path: str | None = None, tool_context: ToolContext | None = None
+) -> str:
+    """
+    Run 'dvc pull' on a specific file or the entire repository.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo_path = tool_context.state.get("repo_path")
+        if not repo_path:
+            return "ERROR: Repository path not set. Please use set_repository first."
+
+        command = [sys.executable, "-m", "dvc", "pull"]
+        if file_path:
+            # Ensure the file path is relative to the repo root
+            if os.path.isabs(file_path):
+                file_path = os.path.relpath(file_path, repo_path)
+            command.append(file_path)
+
+        result = subprocess.run(
+            command,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout
+    except FileNotFoundError:
+        return (
+            "ERROR: 'dvc' command not found. Please ensure dvc is installed in the"
+            " current python environment."
+        )
+    except subprocess.CalledProcessError as e:
+        return f"ERROR: dvc pull failed: {e.stderr}"
+    except Exception as e:
+        return f"ERROR: An unexpected error occurred: {e}"
+
+
+def inspect_parquet_file(
+    file_path: str, tool_context: ToolContext | None = None
+) -> str:
+    """
+    Inspect a Parquet file and return its schema and a sample of the data.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo_path = tool_context.state.get("repo_path")
+        if not repo_path:
+            return "ERROR: Repository path not set. Please use set_repository first."
+
+        full_path = os.path.join(repo_path, file_path)
+        if not os.path.exists(full_path):
+            return f"ERROR: File not found at {full_path}. Did you run dvc pull?"
+
+        df = pd.read_parquet(full_path)
+
+        buffer = io.StringIO()
+        df.info(buf=buffer)
+        schema = buffer.getvalue()
+
+        sample = df.head().to_string()
+        return f"Schema:\n{schema}\n\nSample Data:\n{sample}"
+    except Exception as e:
+        return f"ERROR: Could not inspect Parquet file: {e}"
+
+
+def analyze_parquet_file(
+    file_path: str, tool_context: ToolContext | None = None
+) -> str:
+    """
+    Perform a basic data analysis on a Parquet file.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo_path = tool_context.state.get("repo_path")
+        if not repo_path:
+            return "ERROR: Repository path not set. Please use set_repository first."
+
+        full_path = os.path.join(repo_path, file_path)
+        if not os.path.exists(full_path):
+            return f"ERROR: File not found at {full_path}. Did you run dvc pull?"
+
+        df = pd.read_parquet(full_path)
+        description = df.describe(include="all").to_string()
+
+        # Basic error checking
+        errors = []
+        if df.isnull().values.any():
+            errors.append("Missing values found.")
+
+        # Add more checks as needed, e.g., for duplicates, outliers, etc.
+
+        error_summary = "\n".join(errors) if errors else "No obvious errors found."
+
+        return f"Data Description:\n{description}\n\nError Summary:\n{error_summary}"
+    except Exception as e:
+        return f"ERROR: Could not analyze Parquet file: {e}"
+
+
+def dvc_list_files(tool_context: ToolContext | None = None) -> str:
+    """
+    List all files tracked by DVC in the repository.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo_path = tool_context.state.get("repo_path")
+        if not repo_path:
+            return "ERROR: Repository path not set. Please use set_repository first."
+
+        result = subprocess.run(
+            [sys.executable, "-m", "dvc", "list", ".", "--dvc-only"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout
+    except FileNotFoundError:
+        return (
+            "ERROR: 'dvc' command not found. Please ensure dvc is installed in the"
+            " current python environment."
+        )
+    except subprocess.CalledProcessError as e:
+        return f"ERROR: dvc list failed: {e.stderr}"
+    except Exception as e:
+        return f"ERROR: An unexpected error occurred: {e}"
+
+
+def inspect_yaml_file(file_path: str, tool_context: ToolContext | None = None) -> str:
+    """
+    Inspect a YAML file and return its structure and a sample of the data.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo_path = tool_context.state.get("repo_path")
+        if not repo_path:
+            return "ERROR: Repository path not set. Please use set_repository first."
+
+        full_path = os.path.join(repo_path, file_path)
+        if not os.path.exists(full_path):
+            return f"ERROR: File not found at {full_path}. Did you run dvc pull?"
+
+        with open(full_path) as f:
+            data = yaml.safe_load(f)
+
+        # Basic structure by showing keys at the first level
+        structure = f"Top-level keys: {list(data.keys())}"
+
+        # Sample data (first 5 key-value pairs)
+        sample = dict(list(data.items())[:5])
+
+        return f"Structure:\n{structure}\n\nSample Data:\n{sample}"
+    except yaml.constructor.ConstructorError:
+        with open(full_path) as f:
+            content = f.read()
+        return (
+            "Could not fully parse YAML file due to custom objects. "
+            f"Raw content:\n{content}"
+        )
+    except Exception as e:
+        return f"ERROR: Could not inspect YAML file: {e}"
+
+
+def analyze_yaml_file(file_path: str, tool_context: ToolContext | None = None) -> str:
+    """
+    Perform a basic data analysis on a YAML file.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo_path = tool_context.state.get("repo_path")
+        if not repo_path:
+            return "ERROR: Repository path not set. Please use set_repository first."
+
+        full_path = os.path.join(repo_path, file_path)
+        if not os.path.exists(full_path):
+            return f"ERROR: File not found at {full_path}. Did you run dvc pull?"
+
+        with open(full_path) as f:
+            data = yaml.safe_load(f)
+
+        description = f"The YAML file has {len(data)} top-level keys."
+
+        # Basic error checking
+        errors = []
+        if not data:
+            errors.append("YAML file is empty.")
+
+        error_summary = "\n".join(errors) if errors else "No obvious errors found."
+
+        return f"Data Description:\n{description}\n\nError Summary:\n{error_summary}"
+    except yaml.constructor.ConstructorError:
+        with open(full_path) as f:
+            content = f.read()
+        return (
+            "Could not fully parse YAML file due to custom objects. "
+            f"Raw content:\n{content}"
+        )
+    except Exception as e:
+        return f"ERROR: Could not analyze YAML file: {e}"
+
+
+def list_files_in_directory(
+    directory_path: str, tool_context: ToolContext | None = None
+) -> str:
+    """
+    List all files and directories in a given directory.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo_path = tool_context.state.get("repo_path")
+        if not repo_path:
+            return "ERROR: Repository path not set. Please use set_repository first."
+
+        full_path = os.path.join(repo_path, directory_path)
+        if not os.path.isdir(full_path):
+            return f"ERROR: Directory not found at {full_path}."
+
+        files = os.listdir(full_path)
+        return "\n".join(files)
+    except Exception as e:
+        return f"ERROR: An unexpected error occurred: {e}"

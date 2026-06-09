@@ -1,89 +1,338 @@
-"""Unit tests for agent tools — no network, no GCP credentials required."""
+"""Unit tests for agent tools — no network, no GCP credentials required.
 
-import json
-from unittest.mock import Mock, patch
+These exercise the ported Git/DVC tools against a throwaway local Git
+repository created per test, plus the pure helper functions and the
+``tool_context``-required guard rails.
+"""
 
-from agent.tools.example_tools import _serpapi_search, get_current_datetime, web_search
-from agent.tools.response_models import SearchResult
+import subprocess
+from typing import cast
+
+import pandas as pd
+import pytest
+from google.adk.tools import ToolContext
+
+from agent.tools import data_tools, git_tools
+from agent.tools.git_tools import (
+    _looks_like_remote_repo,
+    _render_yaml_value,
+    _to_ssh_url,
+)
 
 
-def test_get_current_datetime_returns_iso_string():
-    result = get_current_datetime()
+class _FakeToolContext:
+    """Minimal stand-in for ADK's ToolContext — only ``.state`` is used."""
+
+    def __init__(self, state=None):
+        self.state = state if state is not None else {}
+
+
+def fake_ctx(state=None) -> ToolContext:
+    """Return a fake ToolContext, typed as ToolContext for the type checker."""
+    return cast(ToolContext, _FakeToolContext(state))
+
+
+def _run(cmd, cwd):
+    subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    """A local Git repo with a paired `*.meta.yaml` / `*.dvc` committed."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run(["git", "init", "-b", "main"], repo)
+    _run(["git", "config", "user.email", "test@example.com"], repo)
+    _run(["git", "config", "user.name", "Test User"], repo)
+    (repo / "foo.meta.yaml").write_text("title: Foo\ndescription: A dataset\n")
+    (repo / "foo.dvc").write_text(
+        "outs:\n"
+        "- md5: md5fixturevalue\n"
+        "  path: foo.parquet\n"
+        "meta:\n"
+        "  repo_url: https://example.com/foo.git\n"
+    )
+    _run(["git", "add", "."], repo)
+    _run(["git", "commit", "-m", "init"], repo)
+    return str(repo)
+
+
+@pytest.fixture
+def ctx(git_repo):
+    return fake_ctx(state={"repo_path": git_repo})
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers
+# ---------------------------------------------------------------------------
+
+
+def test_looks_like_remote_repo_true_for_urls():
+    assert _looks_like_remote_repo("https://github.com/x/y.git")
+    assert _looks_like_remote_repo("git@github.com:x/y.git")
+    assert _looks_like_remote_repo("ssh://git@host/x.git")
+
+
+def test_looks_like_remote_repo_false_for_local_path(git_repo):
+    assert _looks_like_remote_repo(git_repo) is False
+
+
+def test_render_yaml_value_scalar():
+    assert _render_yaml_value("hello") == "hello"
+    assert _render_yaml_value(42) == "42"
+
+
+def test_render_yaml_value_dict():
+    rendered = _render_yaml_value({"a": 1, "b": 2})
+    assert "a: 1" in rendered
+    assert "b: 2" in rendered
+
+
+def test_to_ssh_url_converts_https():
+    assert (
+        _to_ssh_url("https://gitlab.example.com/group/repo.git")
+        == "git@gitlab.example.com:group/repo.git"
+    )
+
+
+def test_to_ssh_url_converts_http_and_nested_path():
+    assert (
+        _to_ssh_url("http://github.com/org/team/repo.git")
+        == "git@github.com:org/team/repo.git"
+    )
+
+
+def test_to_ssh_url_leaves_ssh_unchanged():
+    url = "git@gitlab.example.com:group/repo.git"
+    assert _to_ssh_url(url) == url
+
+
+def test_to_ssh_url_preserves_embedded_credentials():
+    # A deploy-token URL must not be rewritten (it would lose the token).
+    url = "https://oauth2:tok123@gitlab.example.com/group/repo.git"  # pragma: allowlist secret
+    assert _to_ssh_url(url) == url
+
+
+def test_to_ssh_url_preserves_port_and_local_path():
+    assert _to_ssh_url("https://host:8443/x.git") == "https://host:8443/x.git"
+    assert _to_ssh_url("/local/path/repo") == "/local/path/repo"
+
+
+# ---------------------------------------------------------------------------
+# Git tools — happy paths
+# ---------------------------------------------------------------------------
+
+
+def test_set_repository_configures_state(git_repo):
+    ctx = fake_ctx()
+    result = git_tools.set_repository(git_repo, ctx)
+    assert "configured successfully" in result
+    assert ctx.state["repo_path"]
+
+
+def test_set_repository_invalid_path_returns_error(tmp_path):
+    ctx = fake_ctx()
+    result = git_tools.set_repository(str(tmp_path / "not-a-repo"), ctx)
+    assert result.startswith("ERROR:")
+
+
+def test_find_meta_yaml_files_finds_and_merges(ctx):
+    result = git_tools.find_meta_yaml_files(tool_context=ctx)
+    assert "foo.meta.yaml" in result
+    assert "Foo" in result
+    # merged from the paired .dvc file
+    assert "repo_url" in result or "md5" in result
+
+
+def test_find_dvc_files_finds_dvc(ctx):
+    result = git_tools.find_dvc_files(tool_context=ctx)
+    assert "foo.dvc" in result
+    assert "md5fixturevalue" in result
+
+
+def test_list_projects_lists_project(ctx):
+    result = git_tools.list_projects(tool_context=ctx)
+    assert "foo" in result
+    assert "Foo" in result
+
+
+def test_get_dvc_md5_returns_hash(ctx):
+    result = git_tools.get_dvc_md5("foo.dvc", tool_context=ctx)
+    assert result == "md5fixturevalue"
+
+
+def test_get_repo_url_from_dvc_file(ctx):
+    result = git_tools.get_repo_url_from_dvc_file("foo.dvc", tool_context=ctx)
+    assert result == "https://example.com/foo.git"
+
+
+def test_find_commit_by_hash_string(ctx):
+    result = git_tools.find_commit_by_hash_string("md5fixturevalue", tool_context=ctx)
+    # the commit that introduced the hash string should be found
+    assert "No commits found" not in result
+    assert "ERROR" not in result
+
+
+def test_list_files(ctx):
+    result = git_tools.list_files(tool_context=ctx)
+    assert "foo.dvc" in result
+    assert "foo.meta.yaml" in result
+
+
+def test_checkout_commit_invalid_returns_error(ctx):
+    result = git_tools.checkout_commit("deadbeef", tool_context=ctx)
+    assert result.startswith("ERROR")
+
+
+# ---------------------------------------------------------------------------
+# Git tools — guard rails
+# ---------------------------------------------------------------------------
+
+
+def test_git_tools_require_tool_context():
+    assert git_tools.find_meta_yaml_files() == "ERROR: tool_context is required."
+    assert git_tools.find_dvc_files() == "ERROR: tool_context is required."
+    assert git_tools.list_projects() == "ERROR: tool_context is required."
+    assert git_tools.get_dvc_md5("x.dvc") == "ERROR: tool_context is required."
+    assert (
+        git_tools.find_commit_by_hash_string("x") == "ERROR: tool_context is required."
+    )
+    assert git_tools.checkout_commit("x") == "ERROR: tool_context is required."
+    assert git_tools.list_files() == "ERROR: tool_context is required."
+    assert (
+        git_tools.get_repo_url_from_dvc_file("x.dvc")
+        == "ERROR: tool_context is required."
+    )
+
+
+def test_get_repo_no_repository_configured(monkeypatch):
+    monkeypatch.delenv("REPO_URL", raising=False)
+    ctx = fake_ctx()
+    result = git_tools.find_meta_yaml_files(tool_context=ctx)
+    assert "No repository configured" in result
+
+
+def test_repo_url_rejects_local_folder(monkeypatch, git_repo):
+    # REPO_URL must be a remote Git URL, not a local folder path.
+    monkeypatch.setenv("REPO_URL", git_repo)
+    ctx = fake_ctx()
+    result = git_tools.find_meta_yaml_files(tool_context=ctx)
+    assert "must be a remote Git URL" in result
+
+
+# ---------------------------------------------------------------------------
+# Data tools
+# ---------------------------------------------------------------------------
+
+
+def test_data_tools_require_tool_context():
+    assert data_tools.dvc_pull() == "ERROR: tool_context is required."
+    assert data_tools.dvc_list_files() == "ERROR: tool_context is required."
+    assert data_tools.inspect_parquet_file("x") == "ERROR: tool_context is required."
+    assert data_tools.analyze_parquet_file("x") == "ERROR: tool_context is required."
+    assert data_tools.inspect_yaml_file("x") == "ERROR: tool_context is required."
+    assert data_tools.analyze_yaml_file("x") == "ERROR: tool_context is required."
+    assert data_tools.list_files_in_directory("x") == "ERROR: tool_context is required."
+
+
+def test_data_tools_require_repo_path():
+    ctx = fake_ctx()
+    assert "Repository path not set" in data_tools.inspect_yaml_file("x", ctx)
+    assert "Repository path not set" in data_tools.list_files_in_directory("x", ctx)
+
+
+def test_inspect_yaml_file(ctx):
+    result = data_tools.inspect_yaml_file("foo.meta.yaml", tool_context=ctx)
+    assert "Top-level keys" in result
+    assert "title" in result
+
+
+def test_analyze_yaml_file(ctx):
+    result = data_tools.analyze_yaml_file("foo.meta.yaml", tool_context=ctx)
+    assert "top-level keys" in result
+
+
+def test_inspect_yaml_file_missing_returns_error(ctx):
+    result = data_tools.inspect_yaml_file("missing.yaml", tool_context=ctx)
+    assert result.startswith("ERROR: File not found")
+
+
+def test_list_files_in_directory(ctx, git_repo):
+    result = data_tools.list_files_in_directory(".", tool_context=ctx)
+    assert "foo.dvc" in result
+
+
+def test_inspect_and_analyze_parquet(tmp_path):
+    parquet_dir = tmp_path / "data"
+    parquet_dir.mkdir()
+    df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    df.to_parquet(parquet_dir / "data.parquet")
+    ctx = fake_ctx(state={"repo_path": str(parquet_dir)})
+
+    inspected = data_tools.inspect_parquet_file("data.parquet", tool_context=ctx)
+    assert "Schema:" in inspected
+    assert "Sample Data:" in inspected
+
+    analyzed = data_tools.analyze_parquet_file("data.parquet", tool_context=ctx)
+    assert "Data Description:" in analyzed
+    assert "Error Summary:" in analyzed
+
+
+# ---------------------------------------------------------------------------
+# Error and edge-case branches
+# ---------------------------------------------------------------------------
+
+
+def test_dvc_pull_in_non_dvc_repo_returns_error(ctx):
+    # The git repo is not a DVC project, so `dvc pull` exits non-zero.
+    result = data_tools.dvc_pull(tool_context=ctx)
+    assert result.startswith("ERROR")
+
+
+def test_dvc_list_files_returns_string(ctx):
+    # `dvc list` runs against the git repo and returns its (possibly empty)
+    # listing of DVC-tracked paths as a string.
+    result = data_tools.dvc_list_files(tool_context=ctx)
     assert isinstance(result, str)
-    assert "T" in result
-    assert "Z" in result or "+" in result  # timezone present
 
 
-def test_get_current_datetime_is_utc():
-    result = get_current_datetime()
-    # ISO format with UTC offset ends in +00:00 or Z
-    assert result.endswith("+00:00") or result.endswith("Z")
+def test_clone_remote_repository_invalid_returns_error():
+    ctx = fake_ctx()
+    result = git_tools.clone_remote_repository("/no/such/local/path", ctx)
+    assert result.startswith("ERROR")
 
 
-def test_web_search_stub_returns_results(monkeypatch):
-    monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
-    results = web_search("test query")
-    assert len(results) >= 1
-    assert isinstance(results[0], SearchResult)
+def test_get_dvc_md5_missing_file_returns_error(ctx):
+    result = git_tools.get_dvc_md5("does-not-exist.dvc", tool_context=ctx)
+    assert result.startswith("ERROR")
 
 
-def test_web_search_stub_contains_query_in_snippet(monkeypatch):
-    monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
-    results = web_search("hello world")
-    assert "hello world" in results[0].snippet
+def test_get_repo_url_missing_file_returns_error(ctx):
+    result = git_tools.get_repo_url_from_dvc_file("missing.dvc", tool_context=ctx)
+    assert "File not found" in result
 
 
-def test_web_search_result_has_required_fields(monkeypatch):
-    monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
-    results = web_search("anything")
-    r = results[0]
-    assert r.title
-    assert r.url
-    assert r.snippet
+def test_get_repo_url_no_repo_path_returns_error():
+    ctx = fake_ctx()
+    result = git_tools.get_repo_url_from_dvc_file("foo.dvc", tool_context=ctx)
+    assert "Repository path not set" in result
 
 
-def test_web_search_with_api_key_set(monkeypatch):
-    """Test that web_search calls _serpapi_search when SERPAPI_API_KEY is set."""
-    monkeypatch.setenv("SERPAPI_API_KEY", "test-key-123")
-    with patch("agent.tools.example_tools._serpapi_search") as mock_search:
-        mock_search.return_value = [
-            SearchResult(
-                title="Mocked Result", url="https://example.com", snippet="Mock snippet"
-            )
-        ]
-        results = web_search("test query")
-        mock_search.assert_called_once_with("test query", "test-key-123")
-        assert len(results) == 1
-        assert results[0].title == "Mocked Result"
+def test_find_meta_yaml_files_explicit_branch(ctx):
+    result = git_tools.find_meta_yaml_files(branch="main", tool_context=ctx)
+    assert "foo.meta.yaml" in result
 
 
-def test_serpapi_search_returns_results():
-    """Test _serpapi_search function with mocked urlopen."""
-    mock_response_data = {
-        "organic_results": [
-            {
-                "title": "Test Result 1",
-                "link": "https://example1.com",
-                "snippet": "Snippet 1",
-            },
-            {
-                "title": "Test Result 2",
-                "link": "https://example2.com",
-                "snippet": "Snippet 2",
-            },
-        ]
-    }
+def test_find_meta_yaml_files_unknown_branch_returns_error(ctx):
+    result = git_tools.find_meta_yaml_files(branch="nope", tool_context=ctx)
+    assert result.startswith("ERROR")
 
-    mock_response = Mock()
-    mock_response.read.return_value = json.dumps(mock_response_data).encode("utf-8")
-    mock_response.__enter__ = Mock(return_value=mock_response)
-    mock_response.__exit__ = Mock(return_value=None)
 
-    with patch("urllib.request.urlopen", return_value=mock_response):
-        results = _serpapi_search("test query", "test-api-key")
+def test_inspect_parquet_missing_file_returns_error(ctx):
+    result = data_tools.inspect_parquet_file("missing.parquet", tool_context=ctx)
+    assert "File not found" in result
 
-        assert len(results) == 2
-        assert results[0].title == "Test Result 1"
-        assert results[0].url == "https://example1.com"
-        assert results[0].snippet == "Snippet 1"
-        assert results[1].title == "Test Result 2"
+
+def test_list_files_in_directory_missing_returns_error(ctx):
+    result = data_tools.list_files_in_directory("no_such_dir", tool_context=ctx)
+    assert "Directory not found" in result

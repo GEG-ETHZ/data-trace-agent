@@ -44,3 +44,29 @@ def test_root_agent_has_instruction():
     assert root_agent.instruction is not None
     assert isinstance(root_agent.instruction, str)
     assert len(root_agent.instruction) > 0
+
+
+def test_root_agent_has_sub_agents():
+    """Test that root_agent wires the three sub-agents."""
+    from agent.agent import root_agent
+
+    sub_agent_names = {a.name for a in root_agent.sub_agents}
+    assert sub_agent_names == {
+        "metadata_agent",
+        "code_analysis_agent",
+        "data_analysis_agent",
+    }
+
+
+def test_sub_agents_load_prompts_and_tools():
+    """Each sub-agent should have an instruction and at least one tool."""
+    from agent.agents import (
+        code_analysis_agent,
+        data_analysis_agent,
+        metadata_agent,
+    )
+
+    for sub_agent in (metadata_agent, code_analysis_agent, data_analysis_agent):
+        assert isinstance(sub_agent.instruction, str)
+        assert len(sub_agent.instruction) > 0
+        assert len(sub_agent.tools) > 0

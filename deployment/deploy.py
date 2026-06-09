@@ -47,6 +47,10 @@ def deploy(env: str) -> None:
         "pydantic>=2.0.0",
         "python-dotenv>=1.0.0",
         "pyyaml>=6.0",
+        "gitpython>=3.1.44",
+        "pandas>=2.0.0",
+        "pyarrow>=14.0.0",
+        "dvc[all]>=3.0.0",
     ]
 
     # Local source that must be importable on the remote container. The pickled

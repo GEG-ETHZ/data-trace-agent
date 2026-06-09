@@ -138,6 +138,7 @@ Set `MODEL_PROVIDER` in `.env`:
 | `GOOGLE_CLOUD_PROJECT` | Deploy only | — | GCP project ID |
 | `GOOGLE_CLOUD_LOCATION` | Deploy only | `us-central1` | Vertex AI region |
 | `GCS_STAGING_BUCKET` | Deploy only | — | GCS bucket for Agent Engine artefacts |
+| `REPO_URL` | No | — | Remote Git URL of the DVC registry; cloned on first use as the default repository |
 | `AGENT_ENGINE_RESOURCE_NAME` | No | — | Existing resource to update (omit = create new) |
 | `MODEL_PROVIDER` | No | `google` | Provider selection |
 | `LITELLM_MODEL` | If provider=litellm | — | Full LiteLLM model string |
