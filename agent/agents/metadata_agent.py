@@ -17,8 +17,10 @@ from google.adk.agents import Agent
 from agent import load_prompt
 from agent.tools import (
     clone_remote_repository,
+    dvc_remote_list,
     find_dvc_files,
     find_meta_yaml_files,
+    find_top_level_yaml_files,
     list_projects,
     set_repository,
 )
@@ -29,14 +31,17 @@ metadata_agent = Agent(
     model=resolve_model(),
     description=(
         "A focused sub-agent that extracts `*.meta.yaml` and `*.dvc` metadata "
-        "from the configured repository and returns structured key/value output."
+        "and reads top-level YAML files for repository-level GCP location and "
+        "storage configuration."
     ),
     instruction=load_prompt("metadata_agent"),
     tools=[
         set_repository,
         list_projects,
         find_meta_yaml_files,
+        find_top_level_yaml_files,
         find_dvc_files,
         clone_remote_repository,
+        dvc_remote_list,
     ],
 )

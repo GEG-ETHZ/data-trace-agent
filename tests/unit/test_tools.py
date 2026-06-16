@@ -5,6 +5,7 @@ repository created per test, plus the pure helper functions and the
 ``tool_context``-required guard rails.
 """
 
+import os
 import subprocess
 from typing import cast
 
@@ -55,6 +56,19 @@ def git_repo(tmp_path):
         "meta:\n"
         "  repo_url: https://example.com/foo.git\n"
     )
+    (repo / "bigquery-location-for-dvc.yml").write_text(
+        "gcp:\n"
+        "  project: geg-core-dev\n"
+        "  location: europe-west6\n"
+        "gcs:\n"
+        "  bucket: geg-core-dev-project-beach\n"
+        "bigquery:\n"
+        "  dataset_raw: project_beach_raw\n"
+        "  dataset: project_beach\n"
+    )
+    # Also init DVC and add a remote
+    _run(["dvc", "init", "--no-scm"], repo)
+    _run(["dvc", "remote", "add", "my-gcs", "gs://my-bucket/data", "--local"], repo)
     _run(["git", "add", "."], repo)
     _run(["git", "commit", "-m", "init"], repo)
     return str(repo)
@@ -225,6 +239,31 @@ def test_find_dvc_files_finds_dvc(ctx):
     assert "md5fixturevalue" in result
 
 
+def test_find_top_level_yaml_files_finds_gcp_settings(ctx):
+    result = git_tools.find_top_level_yaml_files(tool_context=ctx)
+    assert "bigquery-location-for-dvc.yml" in result
+    assert "gcp" in result
+    assert "bucket" in result
+    assert "dataset_raw" in result
+
+
+def test_find_top_level_yaml_files_no_matches_returns_message(ctx, git_repo):
+    # Temporarily remove all top-level yaml files to test the "no matches" case
+    repo_path = ctx.state["repo_path"]
+    yaml_files = [f for f in os.listdir(repo_path) if f.endswith((".yml", ".yaml"))]
+    for f in yaml_files:
+        full_path = os.path.join(repo_path, f)
+        os.remove(full_path)
+    _run(["git", "add", "."], repo_path)
+    _run(["git", "commit", "-m", "remove yaml files"], repo_path)
+
+    result = git_tools.find_top_level_yaml_files(tool_context=ctx)
+    assert "No top-level" in result
+
+    # Restore the files
+    _run(["git", "revert", "--no-edit", "HEAD"], repo_path)
+
+
 def test_list_projects_lists_project(ctx):
     result = git_tools.list_projects(tool_context=ctx)
     assert "foo" in result
@@ -266,6 +305,7 @@ def test_checkout_commit_invalid_returns_error(ctx):
 
 def test_git_tools_require_tool_context():
     assert git_tools.find_meta_yaml_files() == "ERROR: tool_context is required."
+    assert git_tools.find_top_level_yaml_files() == "ERROR: tool_context is required."
     assert git_tools.find_dvc_files() == "ERROR: tool_context is required."
     assert git_tools.list_projects() == "ERROR: tool_context is required."
     assert git_tools.get_dvc_md5("x.dvc") == "ERROR: tool_context is required."
@@ -303,6 +343,7 @@ def test_repo_url_rejects_local_folder(monkeypatch, git_repo):
 def test_data_tools_require_tool_context():
     assert data_tools.dvc_pull() == "ERROR: tool_context is required."
     assert data_tools.dvc_list_files() == "ERROR: tool_context is required."
+    assert data_tools.dvc_remote_list() == "ERROR: tool_context is required."
     assert data_tools.inspect_parquet_file("x") == "ERROR: tool_context is required."
     assert data_tools.analyze_parquet_file("x") == "ERROR: tool_context is required."
     assert data_tools.inspect_yaml_file("x") == "ERROR: tool_context is required."
@@ -325,6 +366,12 @@ def test_inspect_yaml_file(ctx):
 def test_analyze_yaml_file(ctx):
     result = data_tools.analyze_yaml_file("foo.meta.yaml", tool_context=ctx)
     assert "top-level keys" in result
+
+
+def test_dvc_remote_list_shows_remotes(ctx):
+    result = data_tools.dvc_remote_list(tool_context=ctx)
+    assert "my-gcs" in result
+    assert "gs://my-bucket/data" in result
 
 
 def test_inspect_yaml_file_missing_returns_error(ctx):

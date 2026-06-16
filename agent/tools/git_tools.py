@@ -430,6 +430,122 @@ def find_meta_yaml_files(
     return "\n".join(lines)
 
 
+def _is_top_level_yaml(path: str) -> bool:
+    return (
+        "/" not in path
+        and (fnmatch.fnmatch(path, "*.yml") or fnmatch.fnmatch(path, "*.yaml"))
+        and not fnmatch.fnmatch(path, "*.meta.yaml")
+    )
+
+
+def find_top_level_yaml_files(
+    branch: str = "main",
+    commit: str | None = None,
+    tool_context: ToolContext | None = None,
+) -> str:
+    """
+    Find all top-level `*.yml` and `*.yaml` files in the selected branch/commit.
+
+    This tool is intended to discover repository-level YAML config files that
+    may contain GCP project, location, bucket, and BigQuery dataset settings.
+
+    Args:
+        branch:       Branch name to use when commit is not provided.
+        commit:       Optional commit hash to inspect.
+        tool_context: Injected by ADK.
+
+    Returns:
+        A structured report with file paths and YAML content for every matching file.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo = _get_repo(tool_context)
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    try:
+        target_commit = _resolve_commit(repo, branch, commit)
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    matches: list[dict[str, Any]] = []
+    for raw_item in target_commit.tree.traverse():
+        item = cast(Any, raw_item)
+        if getattr(item, "type", None) != "blob":
+            continue
+        if not _is_top_level_yaml(item.path):
+            continue
+
+        try:
+            raw_text = item.data_stream.read().decode("utf-8", errors="replace")
+        except Exception:
+            continue
+
+        try:
+            docs = list(yaml.safe_load_all(raw_text))
+        except yaml.YAMLError as exc:
+            matches.append(
+                {
+                    "file_path": item.path,
+                    "error": str(exc),
+                    "commit": target_commit.hexsha,
+                }
+            )
+            continue
+
+        match_entry: dict[str, Any] = {
+            "file_path": item.path,
+            "commit": target_commit.hexsha,
+            "branch": branch,
+            "documents": docs,
+        }
+        matches.append(match_entry)
+
+    if not matches:
+        repo_path = repo.working_dir or repo.git_dir
+        return (
+            f"No top-level '*.yml' or '*.yaml' files were found in branch '{branch}' "
+            f"at commit '{commit or target_commit.hexsha[:8]}' "
+            f"in the repository at '{repo_path}'.\n\n"
+            "Please check the following:\n"
+            "1. The file exists in the root of the project.\n"
+            "2. The file is committed to the repository.\n"
+            "3. You are looking at the correct branch.\n"
+            "4. The agent is configured with the correct repository URL (via REPO_URL environment variable or the `set_repository` tool)."
+        )
+
+    lines: list[str] = [
+        f"Found {len(matches)} top-level '*.yml'/*.yaml file(s) in commit {target_commit.hexsha[:8]} "
+        f"(branch={branch}, commit={commit or 'latest'}):",
+        "=" * 70,
+    ]
+
+    for idx, match in enumerate(matches, 1):
+        lines.append(f"\n[{idx}] File: {match['file_path']}")
+        lines.append(f"     Commit: {match['commit'][:8]}")
+        lines.append(f"     Branch: {match['branch']}")
+
+        if "error" in match:
+            lines.append(f"     ERROR: {match['error']}")
+            continue
+
+        documents = match.get("documents", [])
+        for doc_index, document in enumerate(documents, start=1):
+            lines.append(f"     Document: {doc_index}")
+            if isinstance(document, dict):
+                for key, value in document.items():
+                    lines.append(f"       • {key}: {_render_yaml_value(value)}")
+            else:
+                rendered = yaml.safe_dump(
+                    document, default_flow_style=False, sort_keys=False
+                ).strip()
+                lines.append(f"       • {rendered}")
+        lines.append("-" * 70)
+
+    return "\n".join(lines)
+
+
 def list_projects(
     branch: str = "main",
     commit: str | None = None,

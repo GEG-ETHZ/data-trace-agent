@@ -262,3 +262,44 @@ def list_files_in_directory(
         return "\n".join(files)
     except Exception as e:
         return f"ERROR: An unexpected error occurred: {e}"
+
+
+def dvc_remote_list(tool_context: ToolContext | None = None) -> str:
+    """
+    List configured DVC remotes to find data storage locations.
+
+    Reads the DVC configuration (e.g., from `.dvc/config`) and lists the
+    names and URLs of the configured remotes (like GCS, S3, etc.).
+
+    Args:
+        tool_context: Injected by ADK.
+
+    Returns:
+        A string listing the DVC remotes, or an error message.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+
+    repo_path = tool_context.state.get("repo_path")
+    if not repo_path:
+        return "ERROR: Repository path not set. Please use set_repository first."
+
+    try:
+        # The DVC API is complex for just listing remotes; shell out for simplicity.
+        result = subprocess.run(
+            ["dvc", "remote", "list", "--local"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        output = result.stdout.strip()
+        if not output:
+            return "No DVC remotes configured in this repository."
+        return f"DVC remotes:\n{output}"
+    except FileNotFoundError:
+        return "ERROR: `dvc` command not found. Is DVC installed?"
+    except subprocess.CalledProcessError as exc:
+        if "is not a DVC repository" in exc.stderr:
+            return "This is not a DVC repository. Initialize with `dvc init` first."
+        return f"ERROR: `dvc remote list` failed:\n{exc.stderr}"
