@@ -13,10 +13,18 @@ The DVC registry is the default repository and is **automatically cloned from th
 
 ## Procedure
 
-1. Make sure you are operating in the correct repository (the registry by default; switch with `set_repository`/`clone_remote_repository` only when the project is in another repository's URL).
-2. Pull the DVC tracked data for the project using the `dvc_pull` tool. You can call it without any arguments to pull all data for the repository.
-3. If `dvc_pull` fails, you must stop and report the error. Do not proceed.
-4. Use `dvc_list_files` to see what files are tracked by DVC.
-5. If you need to see the contents of a directory, use `list_files_in_directory`.
-6. Based on the file format, use the appropriate tool to inspect and analyze the data. For Parquet files, use `inspect_parquet_file` and `analyze_parquet_file`. For YAML files, use `inspect_yaml_file` and `analyze_yaml_file`.
-7. Provide an overview of the data, including its main characteristics and potential errors.
+1.  **Identify the Project and Repository**: Make sure you are operating in the correct repository. The default is the DVC registry. Only switch repositories if the project's data is located elsewhere (you would know this from the metadata analysis step).
+
+2.  **Pull the Data**:
+    -   If you are working on a specific project (e.g., "beach-project" which might be located at `datasets/beach-project`), the most targeted way to get its data is to run `dvc_pull` on the project's directory. For example: `dvc_pull('datasets/beach-project')`.
+    -   If you're not sure which files to pull or if you need data from multiple projects, it's often easiest to pull all data for the entire repository by calling `dvc_pull()` with no arguments.
+    -   **Important**: Never pass a `.dvc` file path to `dvc_pull`. The tool acts on directories or data file paths to download the data tracked by `.dvc` files.
+
+3.  **Find and Inspect the Data Files**:
+    -   After pulling, use `list_files_in_directory` on your project's directory (e.g., `datasets/beach-project`) to see the data files you've downloaded.
+    -   You can also use `dvc_list_files` to get a list of all DVC-tracked files in the repository.
+
+4.  **Analyze the Data**:
+    -   Based on the file format (e.g., `.parquet`, `.csv`, `.yml`), use the appropriate tool to inspect and analyze the data (`inspect_parquet_file`, `analyze_parquet_file`, `inspect_yaml_file`, etc.).
+
+5.  **Report Your Findings**: Provide an overview of the data, including its main characteristics and potential errors.

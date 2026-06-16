@@ -55,18 +55,25 @@ def test_root_agent_has_sub_agents():
         "metadata_agent",
         "code_analysis_agent",
         "data_analysis_agent",
+        "bigquery_agent",
     }
 
 
 def test_sub_agents_load_prompts_and_tools():
     """Each sub-agent should have an instruction and at least one tool."""
     from agent.agents import (
+        bigquery_agent,
         code_analysis_agent,
         data_analysis_agent,
         metadata_agent,
     )
 
-    for sub_agent in (metadata_agent, code_analysis_agent, data_analysis_agent):
+    for sub_agent in (
+        metadata_agent,
+        code_analysis_agent,
+        data_analysis_agent,
+        bigquery_agent,
+    ):
         assert isinstance(sub_agent.instruction, str)
         assert len(sub_agent.instruction) > 0
         assert len(sub_agent.tools) > 0

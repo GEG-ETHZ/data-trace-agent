@@ -35,3 +35,10 @@ agents:
       - system/safety.md
     tasks:
       - tasks/data_analysis.md
+
+  bigquery_agent:
+    system:
+      - system/base.md
+      - system/safety.md
+    tasks:
+      - tasks/bigquery.md

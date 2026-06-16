@@ -1,3 +1,4 @@
+from agent.tools.bigquery_tools import query_bigquery
 from agent.tools.data_tools import (
     analyze_parquet_file,
     analyze_yaml_file,
@@ -44,4 +45,6 @@ __all__ = [
     "inspect_parquet_file",
     "inspect_yaml_file",
     "list_files_in_directory",
+    # bigquery_tools
+    "query_bigquery",
 ]

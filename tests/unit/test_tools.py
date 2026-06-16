@@ -486,3 +486,16 @@ def test_inspect_parquet_missing_file_returns_error(ctx):
 def test_list_files_in_directory_missing_returns_error(ctx):
     result = data_tools.list_files_in_directory("no_such_dir", tool_context=ctx)
     assert "Directory not found" in result
+
+
+def test_query_bigquery_returns_error_on_exception(mocker):
+    """Test that query_bigquery returns a BQQueryResponse with an error on exception."""
+    mocker.patch(
+        "agent.tools.bigquery_tools.bigquery.Client",
+        side_effect=Exception("test error"),
+    )
+    from agent.tools.bigquery_tools import query_bigquery
+
+    result = query_bigquery(query="SELECT 1")
+    assert result.error == "test error"
+    assert result.results is None
