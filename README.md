@@ -35,6 +35,64 @@ flowchart TD
     CLIENT[API Consumer] -->|REST| ENGINE
 ```
 
+## Agent Architecture
+
+```mermaid
+flowchart TD
+    subgraph TopLayer[" "]
+        direction LR
+        Actor([Actor])
+
+        subgraph GCP["GCP"]
+            direction TD
+            subgraph Deployment["Gemini Enterprise Agent Deployment"]
+                direction TD
+                agent((agent))
+                tool_bq((tool<br>bigquery))
+                tool_storage((tool<br>storage))
+                tool_webhook((tool<br>webhook))
+            end
+            BigQuery[BigQuery]
+            GCS[GCS]
+            CloudFunction[Cloud Function]
+
+            agent --> tool_bq
+            agent --> tool_storage
+            agent --> tool_webhook
+
+            tool_bq --> BigQuery
+            tool_storage --> GCS
+            tool_webhook --> CloudFunction
+        end
+
+        Actor --> agent
+    end
+
+    subgraph Gitlab["Gitlab"]
+        subgraph DVC_registry["DVC registry (git repo)"]
+            ProjectA_meta[Project A metadata]
+            ProjectB_meta[Project B metadata]
+        end
+
+        subgraph ProjectA["Project A"]
+            DVC_remote_A[(DVC remote)] ~~~ Git_repo_A[Git repo]
+        end
+
+        subgraph ProjectB["Project B"]
+            DVC_remote_B[(DVC remote)] ~~~ Git_repo_B[Git repo]
+        end
+    end
+
+    CloudFunction --> DVC_registry
+
+    DVC_registry --> ProjectA
+    DVC_registry --> ProjectB
+
+    Actor <--> Gitlab
+
+    style TopLayer fill:none,stroke:none,color:transparent
+```
+
 ## Quickstart
 
 ### Prerequisites
