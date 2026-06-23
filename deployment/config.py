@@ -1,4 +1,5 @@
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,11 +60,24 @@ _FORWARDED_ENV_VARS = (
 )
 
 
+_SECRET_NAME_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+
+
 def _set_secret_or_plain(env: dict, key: str) -> None:
     """Populate ``env[key]`` from ``<KEY>_SECRET`` (Secret Manager ref, preferred)
     or a plain ``<KEY>`` value. Does nothing if neither is set."""
     secret = os.getenv(f"{key}_SECRET")
     if secret:
+        # Vertex AI Agent Engine rejects secret names with hyphens at the API
+        # level despite its error message claiming hyphens are allowed. Use
+        # underscores when naming secrets (e.g. gitlab_deploy_token, not
+        # gitlab-deploy-token).
+        if not _SECRET_NAME_RE.match(secret):
+            raise ValueError(
+                f"{key}_SECRET={secret!r} contains characters not accepted by "
+                "Vertex AI Agent Engine. Secret Manager secret names must use "
+                "only alphanumeric characters and underscores (not hyphens)."
+            )
         from google.cloud.aiplatform_v1.types import env_var  # noqa: PLC0415
 
         env[key] = env_var.SecretRef(
