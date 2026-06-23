@@ -10,13 +10,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Added
 
 - Initial agent scaffold from [agent-deployment-template](https://github.com/GEG-ETHZ/agent-deployment-template)
-- Git authentication for headless runtimes: when `GIT_AUTH_TOKEN` is set, repo
+- Git authentication for headless runtimes via GitLab Group Deploy Token
+  (recommended) or Personal Access Token: when `GIT_AUTH_TOKEN` is set, repo
   URLs on the matching host (`GIT_AUTH_HOST`, defaulting to the `REPO_URL` host)
-  are cloned over token-HTTPS instead of SSH, so the registry and project repos
-  clone on Vertex AI Agent Engine (which has no SSH key). Credentials are
-  redacted from any error output. Deploy forwards a curated env-var allowlist to
-  the runtime and supports the token as a Secret Manager `SecretRef`
-  (`GIT_AUTH_TOKEN_SECRET`) or a plain value
+  are cloned over token-HTTPS (`https://<GIT_AUTH_USERNAME>:<token>@host/...`),
+  so the registry and project repos clone on Vertex AI Agent Engine (which has
+  no SSH key). For deploy tokens set `GIT_AUTH_USERNAME` to the token name; for
+  PATs use `oauth2`. Credentials are redacted from any error output. Deploy
+  forwards a curated env-var allowlist to the runtime and supports the token as a
+  Secret Manager `SecretRef` (`GIT_AUTH_TOKEN_SECRET`) or a plain value
+- `make upload-secret` target and `deployment/scripts/upload_secret.sh` helper
+  for uploading deploy tokens (or any secret) to Secret Manager
 - DVC remote credentials on headless runtimes: deploy now sets the Agent Engine
   `service_account` (`AGENT_ENGINE_SERVICE_ACCOUNT`) whose ADC authenticates GCS
   remote pulls, and `dvc_pull` writes `<repo>/.dvc/config.local` from

@@ -64,6 +64,9 @@ traces:
 setup-gcp:
 	bash deployment/scripts/setup_gcp.sh
 
+upload-secret:
+	bash deployment/scripts/upload_secret.sh
+
 pre-commit:
 	uv run pre-commit run --all-files
 

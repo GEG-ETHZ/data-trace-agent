@@ -82,6 +82,7 @@ tests/
 | `make logs` | Stream Cloud Logging |
 | `make traces` | Open Cloud Trace in browser |
 | `make setup-gcp` | One-time GCP bootstrap |
+| `make upload-secret` | Upload a secret (e.g., GitLab deploy token) to Secret Manager |
 
 ## How to add a tool
 
