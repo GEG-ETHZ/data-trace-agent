@@ -178,6 +178,9 @@ def _resolve_clone_url(repo_location: str) -> str:
     cred = _git_token_for_host(host)
     if cred:
         username, token = cred
+        # URL-encode so special chars in deploy token names (e.g. "+") are safe.
+        username = urllib.parse.quote(username, safe="")
+        token = urllib.parse.quote(token, safe="")
         return f"https://{username}:{token}@{host}/{path}"
     return _to_ssh_url(repo_location)
 
