@@ -64,6 +64,14 @@ def deploy(env: str) -> None:
     # alongside it (the prompts dir travels too for any runtime reads).
     extra_packages = ["agent", "prompts"]
 
+    # Pass root_agent directly so Agent Engine wraps it in AdkApp and lets
+    # set_up() auto-select VertexAiSessionService (server-managed, shared across
+    # replicas) when GOOGLE_CLOUD_AGENT_ENGINE_ID is present in the container.
+    # The playground does create_session then stream_query(session_id=...) as two
+    # separate calls that may hit different replicas — an InMemorySessionService
+    # would lose the session between them and the playground would hang. The
+    # service-account ADC in the container authenticates the SessionService API
+    # (it is not blocked; sibling agents in this project use it).
     if config.resource_name:
         logger.info("  Updating: %s", config.resource_name)
         existing = agent_engines.get(config.resource_name)
@@ -93,15 +101,24 @@ def deploy(env: str) -> None:
     Path(".agent_engine_resource").write_text(resource_name + "\n")
 
     logger.info("Running smoke test...")
-    # A deployed ADK agent exposes stream_query (a generator of event dicts),
-    # not query. Drain it and require at least one event back.
+    # Mirror the playground flow exactly: create a server-side session first,
+    # then stream_query against that session_id. These are two separate calls
+    # that may hit different replicas, so this catches session-service
+    # misconfigurations (e.g. a per-replica InMemorySessionService) that a
+    # sessionless stream_query would silently pass.
+    session = remote_agent.create_session(user_id="smoke-test")  # type: ignore[attr-defined]
+    session_id = session["id"] if isinstance(session, dict) else session.id
     events = list(
         remote_agent.stream_query(  # type: ignore[attr-defined]
-            message="ping", user_id="smoke-test"
+            message="ping", user_id="smoke-test", session_id=session_id
         )
     )
     if not events:
-        logger.error("Smoke test returned no events.")
+        logger.error(
+            "Smoke test returned no events for session %s — the agent did not "
+            "respond to a session-scoped query (this is the playground hang).",
+            session_id,
+        )
         sys.exit(1)
     logger.info("Smoke test passed.")
 

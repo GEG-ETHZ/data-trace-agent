@@ -57,8 +57,7 @@ else
   echo "Secret '$SECRET_NAME' not found. Creating it..."
   gcloud secrets create "$SECRET_NAME" \
     --project="$PROJECT_ID" \
-    --replication-policy="automatic" \
-    --description="Git credentials for Data Trace Agent on Cloud Run"
+    --replication-policy="automatic"
 fi
 
 # Add the file content as a new secret version

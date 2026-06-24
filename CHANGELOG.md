@@ -58,6 +58,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Deployed agent no longer hangs in the Vertex AI playground. The deploy script
+  passed `root_agent` wrapped in `AdkApp(session_service_builder=InMemorySessionService)`,
+  which stored sessions in a single replica's memory; the playground's separate
+  `create_session` and `stream_query` calls could hit different replicas, losing
+  the session and producing no response. Deploy now passes `root_agent` directly
+  so Agent Engine auto-selects the server-managed `VertexAiSessionService`
+  (shared across replicas) via the container's ADC
+- Deploy smoke test now mirrors the playground flow — it creates a session and
+  runs a session-scoped `stream_query` — so a per-replica session service can no
+  longer pass the smoke test undetected
 - `find_commit_by_hash_string` now uses `git log -S` (pickaxe) instead of
   `iter_commits(all=True, S=...)`, which always failed because `git rev-list`
   rejects both `--all` and a default revision together
