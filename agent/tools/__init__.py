@@ -12,14 +12,17 @@ from agent.tools.data_tools import (
 from agent.tools.git_tools import (
     checkout_commit,
     clone_remote_repository,
+    clone_repository_at_revision,
     find_commit_by_hash_string,
     find_dvc_files,
     find_meta_yaml_files,
     find_top_level_yaml_files,
+    get_dvc_import_info,
     get_dvc_md5,
     get_repo_url_from_dvc_file,
     list_files,
     list_projects,
+    read_file_content,
     set_repository,
 )
 
@@ -27,14 +30,17 @@ __all__ = [
     # git_tools
     "checkout_commit",
     "clone_remote_repository",
+    "clone_repository_at_revision",
     "find_commit_by_hash_string",
     "find_dvc_files",
     "find_meta_yaml_files",
     "find_top_level_yaml_files",
+    "get_dvc_import_info",
     "get_dvc_md5",
     "get_repo_url_from_dvc_file",
     "list_files",
     "list_projects",
+    "read_file_content",
     "set_repository",
     # data_tools
     "analyze_parquet_file",

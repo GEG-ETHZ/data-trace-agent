@@ -7,16 +7,19 @@ synthesises a final structured answer for the user.
 
 Tool inventory
 --------------
-set_repository              - Point the agent at a local Git repo directory or remote URL.
-find_meta_yaml_files        - Find and extract all `*.meta.yaml` files in a branch/commit.
-find_dvc_files              - Find and extract all `*.dvc` files in a branch/commit.
-list_projects               - List projects by finding `*.meta.yaml` files.
-clone_remote_repository     - Clone a remote Git repository URL into a temporary directory.
-get_dvc_md5                 - Extract the MD5 hash from the 'outs' section of a .dvc file.
-find_commit_by_hash_string  - Find a git commit by a string in its history.
-checkout_commit             - Check out a specific git commit by its hash.
-list_files                  - List all files in the current checkout of the repository.
-get_repo_url_from_dvc_file  - Extract the repository URL from a .dvc file.
+set_repository                - Point the agent at a local Git repo directory or remote URL.
+find_meta_yaml_files          - Find and extract all `*.meta.yaml` files in a branch/commit.
+find_dvc_files                - Find and extract all `*.dvc` files in a branch/commit.
+list_projects                 - List projects by finding `*.meta.yaml` files.
+clone_remote_repository       - Clone a remote Git repository URL into a temporary directory.
+clone_repository_at_revision  - Clone a repo and check out a specific commit (rev_lock).
+get_dvc_md5                   - Extract the MD5 hash from the 'outs' section of a .dvc file.
+get_dvc_import_info           - Extract url, rev_lock, path, and md5 from a .dvc import file.
+find_commit_by_hash_string    - Find a git commit by a string in its history.
+checkout_commit               - Check out a specific git commit by its hash.
+list_files                    - List all files in the current checkout of the repository.
+read_file_content             - Read a file (or list a directory) from the working tree.
+get_repo_url_from_dvc_file    - Extract the repository URL from a .dvc file.
 """
 
 from __future__ import annotations
@@ -295,8 +298,11 @@ def find_meta_yaml_files(
     """
     Find all `*.meta.yaml` files in the selected branch/commit and extract their contents.
 
-    This tool also locates paired `*.dvc` files with the same base name and merges
-    their content with the metadata files.
+    For every `*.meta.yaml` found, this tool also locates **all** `*.dvc` files
+    that live in the same directory (their base name does not have to match the
+    yaml file — a project may store metadata in ``project.meta.yaml`` and data
+    tracking in ``data-location.dvc``). The content of every co-located `.dvc`
+    file is merged with the metadata to produce a single, unified project record.
 
     Args:
         branch:       Branch name to use when commit is not provided.
@@ -304,7 +310,8 @@ def find_meta_yaml_files(
         tool_context: Injected by ADK.
 
     Returns:
-        A structured report with file paths and YAML content for every matching file.
+        A structured report with file paths and merged YAML content for every
+        matching project.
     """
     if tool_context is None:
         return "ERROR: tool_context is required."
@@ -354,41 +361,46 @@ def find_meta_yaml_files(
             "documents": docs,
         }
 
-        # Attempt to locate a paired .dvc file with the same base name
-        # e.g. datasets/foo.meta.yaml -> datasets/foo.dvc
-        base = re.sub(r"\.meta\.ya?ml$", "", path, flags=re.IGNORECASE)
-        dvc_candidate = f"{base}.dvc"
-        dvc_item = blobs_by_path.get(dvc_candidate)
-        if dvc_item is not None:
+        # Locate ALL .dvc files in the same directory as this .meta.yaml.
+        # In the DVC registry each project directory has one metadata file
+        # and one tracking file; their base names may differ (e.g.
+        # "project-description.meta.yaml" + "data-location.dvc").
+        parent_dir = os.path.dirname(path)
+        dvc_files_in_dir: list[dict[str, Any]] = []
+        for blob_path, blob_item in blobs_by_path.items():
+            if not blob_path.endswith(".dvc"):
+                continue
+            if os.path.dirname(blob_path) != parent_dir:
+                continue
             try:
-                dvc_raw = dvc_item.data_stream.read().decode("utf-8", errors="replace")
+                dvc_raw = blob_item.data_stream.read().decode("utf-8", errors="replace")
                 dvc_docs = list(yaml.safe_load_all(dvc_raw))
-                match_entry["dvc_path"] = dvc_candidate
-                match_entry["dvc_documents"] = dvc_docs
+                dvc_files_in_dir.append({"path": blob_path, "documents": dvc_docs})
             except yaml.YAMLError as exc:
-                match_entry["dvc_error"] = str(exc)
+                dvc_files_in_dir.append({"path": blob_path, "error": str(exc)})
             except Exception:
-                # non-fatal; ignore binary or unreadable .dvc files
-                match_entry["dvc_error"] = "Unable to read .dvc file"
+                dvc_files_in_dir.append({"path": blob_path, "error": "Unable to read"})
 
-        # Build joined documents where possible: merge dict documents from meta with first dict dvc document
+        if dvc_files_in_dir:
+            match_entry["dvc_files"] = dvc_files_in_dir
+
+        # Build a merged DVC base by combining all dict documents from every
+        # co-located .dvc file (later files' keys override earlier ones).
+        merged_dvc: dict[str, Any] = {}
+        for dvc_file in dvc_files_in_dir:
+            for dvc_doc in dvc_file.get("documents") or []:
+                if isinstance(dvc_doc, dict):
+                    merged_dvc.update(dvc_doc)
+
+        # Build joined documents: DVC content as base, .meta.yaml overrides.
         joined: list[dict[str, Any]] = []
-        dvc_docs = match_entry.get("dvc_documents") or []
-        first_dvc = None
-        for d in dvc_docs:
-            if isinstance(d, dict):
-                first_dvc = d
-                break
-
         for doc in docs:
-            if isinstance(doc, dict) and isinstance(first_dvc, dict):
-                merged = dict(first_dvc)  # dvc keys as defaults
-                merged.update(doc)  # meta.yaml overrides
+            if isinstance(doc, dict) and merged_dvc:
+                merged = dict(merged_dvc)
+                merged.update(doc)
                 joined.append(merged)
-            else:
-                # if we can't merge, just include the original meta document
-                if isinstance(doc, dict):
-                    joined.append(doc)
+            elif isinstance(doc, dict):
+                joined.append(doc)
 
         if joined:
             match_entry["joined_documents"] = joined
@@ -412,11 +424,16 @@ def find_meta_yaml_files(
         lines.append(f"     Commit: {match['commit'][:8]}")
         lines.append(f"     Branch: {match['branch']}")
 
+        dvc_files = match.get("dvc_files") or []
+        if dvc_files:
+            dvc_paths = ", ".join(f["path"] for f in dvc_files)
+            lines.append(f"     Paired DVC file(s): {dvc_paths}")
+
         if "error" in match:
             lines.append(f"     ERROR: {match['error']}")
             continue
 
-        # Show joined documents if available, otherwise show raw documents
+        # Show joined (merged) documents if available, else raw meta documents.
         documents_to_show = match.get("joined_documents", match.get("documents", []))
         for doc_index, document in enumerate(documents_to_show, start=1):
             lines.append(f"     Document: {doc_index}")
@@ -876,6 +893,183 @@ def list_files(tool_context: ToolContext | None = None) -> str:
         return "\n".join(repo.git.ls_files().splitlines())
     except Exception as e:
         return f"ERROR: An unexpected error occurred: {e}"
+
+
+def clone_repository_at_revision(
+    repo_url: str,
+    commit_hash: str,
+    tool_context: ToolContext,
+) -> str:
+    """
+    Clone a remote repository and check out a specific commit revision.
+
+    Use this when a `.dvc` file's ``rev_lock`` field records the exact commit of
+    the source repository that was used to produce the tracked data. Cloning at
+    that revision gives a reproducible snapshot of the code.
+
+    Args:
+        repo_url:     Remote Git URL (https://, git@, or ssh://).
+        commit_hash:  Commit hash to check out after cloning (e.g. the
+                      ``rev_lock`` value from a `.dvc` import file).
+        tool_context: Injected by ADK — the cloned path is persisted as the
+                      active repository.
+
+    Returns:
+        Confirmation with the clone path and checked-out commit, or an error.
+    """
+    resolved_url = _resolve_clone_url(repo_url)
+    temp_dir = tempfile.mkdtemp(prefix="data_trace_agent_repo_")
+    try:
+        repo = Repo.clone_from(resolved_url, temp_dir)
+        repo.git.checkout(commit_hash)
+        tool_context.state[_STATE_KEY] = temp_dir
+        return (
+            f"Successfully cloned '{_redact_credentials(repo_url)}' "
+            f"and checked out commit '{commit_hash[:12]}' to '{temp_dir}'."
+        )
+    except GitCommandError as exc:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return f"ERROR: {_redact_credentials(str(exc))}"
+    except Exception as exc:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return f"ERROR: {exc}"
+
+
+def get_dvc_import_info(
+    file_path: str,
+    tool_context: ToolContext | None = None,
+) -> str:
+    """
+    Extract import metadata from a `.dvc` file created by ``dvc import``.
+
+    Returns the source repository URL, the locked commit hash (``rev_lock``),
+    the imported path within that repository, and the output MD5. Use
+    ``clone_repository_at_revision`` with the returned URL and ``rev_lock`` to
+    reproduce the exact version of the data.
+
+    Args:
+        file_path:    Path to the `.dvc` file, relative to the registry root
+                      (e.g. ``datasets/beach-project/data.dvc``).
+        tool_context: Injected by ADK.
+
+    Returns:
+        A structured summary of the import information, or an error message.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo = _get_repo(tool_context)
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    working_dir = repo.working_dir
+    if not working_dir:
+        return "ERROR: The repository has no working tree."
+
+    full_path = os.path.join(working_dir, file_path)
+    if not os.path.exists(full_path):
+        return f"ERROR: File not found at '{file_path}' in the repository."
+
+    try:
+        with open(full_path) as f:
+            data = yaml.safe_load(f)
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
+        return f"ERROR: Could not parse '{file_path}': {exc}"
+
+    if not isinstance(data, dict):
+        return f"ERROR: '{file_path}' did not parse to a YAML mapping."
+
+    lines = [f"DVC import info for '{file_path}':"]
+
+    url = rev_lock = rev = dep_path = None
+    for dep in data.get("deps") or []:
+        if isinstance(dep, dict):
+            dep_path = dep.get("path")
+            repo_info = dep.get("repo")
+            if isinstance(repo_info, dict):
+                url = repo_info.get("url")
+                rev_lock = repo_info.get("rev_lock")
+                rev = repo_info.get("rev")
+            break
+
+    if url:
+        lines.append(f"  Source repository URL: {url}")
+    if rev_lock:
+        lines.append(f"  Locked commit (rev_lock): {rev_lock}")
+    if rev:
+        lines.append(f"  Branch/tag (rev): {rev}")
+    if dep_path:
+        lines.append(f"  Source path in repo: {dep_path}")
+
+    for out in data.get("outs") or []:
+        if isinstance(out, dict):
+            if out.get("md5"):
+                lines.append(f"  Output MD5: {out['md5']}")
+            if out.get("path"):
+                lines.append(f"  Local output path: {out['path']}")
+
+    if not url and not rev_lock:
+        lines.append(
+            "  Note: No DVC import metadata found (deps[].repo). "
+            "This may be a local .dvc file, not a dvc import."
+        )
+
+    return "\n".join(lines)
+
+
+def read_file_content(
+    file_path: str,
+    tool_context: ToolContext | None = None,
+) -> str:
+    """
+    Read the content of a file from the current repository's working tree.
+
+    Use this to inspect README files, documentation, Makefiles, and other
+    text files in a cloned repository — for example to understand how data was
+    generated or how to reproduce a dataset.
+
+    Args:
+        file_path:    Path relative to the repository root (e.g. ``README.md``,
+                      ``Makefile``, ``docs/pipeline.md``).
+        tool_context: Injected by ADK.
+
+    Returns:
+        The file content (truncated at 20 000 chars), or an error message.
+        If ``file_path`` is a directory, lists its entries instead.
+    """
+    if tool_context is None:
+        return "ERROR: tool_context is required."
+    try:
+        repo = _get_repo(tool_context)
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    working_dir = repo.working_dir
+    if not working_dir:
+        return "ERROR: The repository has no working tree."
+
+    full_path = os.path.join(working_dir, file_path)
+    if not os.path.exists(full_path):
+        return f"ERROR: File not found at '{file_path}'."
+
+    if os.path.isdir(full_path):
+        try:
+            entries = sorted(os.listdir(full_path))
+            return f"'{file_path}' is a directory. Contents:\n" + "\n".join(entries)
+        except Exception as exc:
+            return f"ERROR: Cannot list directory '{file_path}': {exc}"
+
+    try:
+        with open(full_path, encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        if len(content) > 20_000:
+            content = (
+                content[:20_000]
+                + f"\n\n[... truncated — file has {len(content)} total chars]"
+            )
+        return content
+    except Exception as exc:
+        return f"ERROR: Cannot read '{file_path}': {exc}"
 
 
 def get_repo_url_from_dvc_file(

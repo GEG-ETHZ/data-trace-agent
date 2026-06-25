@@ -56,6 +56,19 @@ def git_repo(tmp_path):
         "meta:\n"
         "  repo_url: https://example.com/foo.git\n"
     )
+    # A DVC import file with deps[].repo (the standard dvc import format).
+    (repo / "imported.dvc").write_text(
+        "frozen: true\n"
+        "deps:\n"
+        "- path: data/beach\n"
+        "  repo:\n"
+        "    url: https://gitlab.example.com/geg/beach-project.git\n"
+        "    rev: main\n"
+        "    rev_lock: abc123def456789\n"
+        "outs:\n"
+        "- md5: deadbeefcafe\n"
+        "  path: datasets/beach\n"
+    )
     (repo / "bigquery-location-for-dvc.yml").write_text(
         "gcp:\n"
         "  project: geg-core-dev\n"
@@ -65,6 +78,9 @@ def git_repo(tmp_path):
         "bigquery:\n"
         "  dataset_raw: project_beach_raw\n"
         "  dataset: project_beach\n"
+    )
+    (repo / "README.md").write_text(
+        "# Beach Project\n\nRun `make data` to reproduce.\n"
     )
     # Also init DVC and add a remote
     _run(["dvc", "init", "--no-scm"], repo)
@@ -229,8 +245,45 @@ def test_find_meta_yaml_files_finds_and_merges(ctx):
     result = git_tools.find_meta_yaml_files(tool_context=ctx)
     assert "foo.meta.yaml" in result
     assert "Foo" in result
-    # merged from the paired .dvc file
+    # merged from co-located .dvc files (same-name or different-name)
     assert "repo_url" in result or "md5" in result
+
+
+def test_find_meta_yaml_files_merges_different_named_dvc(tmp_path):
+    """A .meta.yaml and a .dvc file with different base names in the same dir must be merged."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run(["git", "init", "-b", "main"], repo)
+    _run(["git", "config", "user.email", "test@example.com"], repo)
+    _run(["git", "config", "user.name", "Test User"], repo)
+
+    # Different base names in the same directory
+    ds = repo / "datasets" / "myproject"
+    ds.mkdir(parents=True)
+    (ds / "project-description.meta.yaml").write_text(
+        "title: MyProject\ndescription: A test dataset\n"
+    )
+    (ds / "data-location.dvc").write_text(
+        "deps:\n"
+        "- path: data\n"
+        "  repo:\n"
+        "    url: https://gitlab.example.com/org/myproject.git\n"
+        "    rev_lock: cafebabe1234\n"
+        "outs:\n"
+        "- md5: abc123\n"
+        "  path: datasets/myproject/data\n"
+    )
+    _run(["git", "add", "."], repo)
+    _run(["git", "commit", "-m", "init"], repo)
+
+    ctx = fake_ctx(state={"repo_path": str(repo)})
+    result = git_tools.find_meta_yaml_files(tool_context=ctx)
+
+    assert "project-description.meta.yaml" in result
+    assert "data-location.dvc" in result  # shown as paired DVC file
+    assert "MyProject" in result
+    assert "cafebabe1234" in result  # pragma: allowlist secret
+    assert "https://gitlab.example.com/org/myproject.git" in result
 
 
 def test_find_dvc_files_finds_dvc(ctx):
@@ -320,6 +373,29 @@ def test_checkout_commit_invalid_returns_error(ctx):
     assert result.startswith("ERROR")
 
 
+def test_checkout_commit_success(ctx, git_repo):
+    from git import Repo as GitRepo
+
+    head_hash = GitRepo(git_repo).head.commit.hexsha
+    result = git_tools.checkout_commit(head_hash, tool_context=ctx)
+    assert "Successfully checked out" in result
+
+
+def test_find_commit_by_hash_string_not_found(ctx):
+    result = git_tools.find_commit_by_hash_string(
+        "xyzzy_notfound_xyz", tool_context=ctx
+    )
+    assert "No commits found" in result
+
+
+def test_get_dvc_md5_no_md5_key_returns_error(ctx, git_repo):
+    no_md5_dvc = os.path.join(git_repo, "no_md5.dvc")
+    with open(no_md5_dvc, "w") as f:
+        f.write("outs:\n- path: data.csv\n")
+    result = git_tools.get_dvc_md5("no_md5.dvc", tool_context=ctx)
+    assert result.startswith("ERROR")
+
+
 # ---------------------------------------------------------------------------
 # Git tools — guard rails
 # ---------------------------------------------------------------------------
@@ -339,6 +415,10 @@ def test_git_tools_require_tool_context():
     assert (
         git_tools.get_repo_url_from_dvc_file("x.dvc")
         == "ERROR: tool_context is required."
+    )
+    assert git_tools.get_dvc_import_info("x.dvc") == "ERROR: tool_context is required."
+    assert (
+        git_tools.read_file_content("README.md") == "ERROR: tool_context is required."
     )
 
 
@@ -375,7 +455,12 @@ def test_data_tools_require_tool_context():
 
 def test_data_tools_require_repo_path():
     ctx = fake_ctx()
+    assert "Repository path not set" in data_tools.dvc_pull(tool_context=ctx)
+    assert "Repository path not set" in data_tools.dvc_list_files(tool_context=ctx)
+    assert "Repository path not set" in data_tools.inspect_parquet_file("x", ctx)
+    assert "Repository path not set" in data_tools.analyze_parquet_file("x", ctx)
     assert "Repository path not set" in data_tools.inspect_yaml_file("x", ctx)
+    assert "Repository path not set" in data_tools.analyze_yaml_file("x", ctx)
     assert "Repository path not set" in data_tools.list_files_in_directory("x", ctx)
 
 
@@ -406,13 +491,25 @@ def test_resolve_pull_targets(git_repo):
 
     # A directory expands to every `.dvc` file beneath it (so the agent can
     # pull a whole project dir, which bare `dvc pull <dir>` does not support).
-    assert _resolve_pull_targets(git_repo, ".") == ["foo.dvc"]
+    targets = _resolve_pull_targets(git_repo, ".")
+    assert "foo.dvc" in targets
+    assert "imported.dvc" in targets
     # A `.dvc` file passes through unchanged.
     assert _resolve_pull_targets(git_repo, "foo.dvc") == ["foo.dvc"]
     # A tracked data path prefers its sibling `.dvc` file when present.
     assert _resolve_pull_targets(git_repo, "foo") == ["foo.dvc"]
     # An unknown plain path is passed through as-is.
     assert _resolve_pull_targets(git_repo, "nope.parquet") == ["nope.parquet"]
+    # An absolute path is normalised to relative before processing.
+    abs_dvc = os.path.join(git_repo, "foo.dvc")
+    assert _resolve_pull_targets(git_repo, abs_dvc) == ["foo.dvc"]
+
+
+def test_dvc_pull_empty_directory_returns_error(ctx, git_repo):
+    empty_dir = os.path.join(git_repo, "empty_subdir")
+    os.makedirs(empty_dir, exist_ok=True)
+    result = data_tools.dvc_pull(file_path="empty_subdir", tool_context=ctx)
+    assert "No DVC-tracked files" in result
 
 
 def test_list_files_in_directory(ctx, git_repo):
@@ -464,6 +561,14 @@ def test_inspect_and_analyze_parquet(tmp_path):
     assert "Error Summary:" in analyzed
 
 
+def test_analyze_parquet_file_reports_missing_values(tmp_path):
+    df = pd.DataFrame({"a": [1, None, 3], "b": ["x", "y", None]})
+    df.to_parquet(tmp_path / "nulls.parquet")
+    ctx = fake_ctx(state={"repo_path": str(tmp_path)})
+    result = data_tools.analyze_parquet_file("nulls.parquet", tool_context=ctx)
+    assert "Missing values found" in result
+
+
 # ---------------------------------------------------------------------------
 # Error and edge-case branches
 # ---------------------------------------------------------------------------
@@ -472,6 +577,13 @@ def test_inspect_and_analyze_parquet(tmp_path):
 def test_dvc_pull_in_non_dvc_repo_returns_error(ctx):
     # The git repo is not a DVC project, so `dvc pull` exits non-zero.
     result = data_tools.dvc_pull(tool_context=ctx)
+    assert result.startswith("ERROR")
+
+
+def test_dvc_pull_with_dvc_file_path_errors_gracefully(ctx):
+    # Calling with a specific .dvc file path exercises the targets extension
+    # branch; the pull itself fails because no real remote data exists.
+    result = data_tools.dvc_pull(file_path="foo.dvc", tool_context=ctx)
     assert result.startswith("ERROR")
 
 
@@ -488,6 +600,13 @@ def test_clone_remote_repository_invalid_returns_error():
     assert result.startswith("ERROR")
 
 
+def test_clone_remote_repository_local_path_success(git_repo):
+    ctx = fake_ctx()
+    result = git_tools.clone_remote_repository(git_repo, ctx)
+    assert "Successfully cloned" in result
+    assert ctx.state.get("repo_path")
+
+
 def test_get_dvc_md5_missing_file_returns_error(ctx):
     result = git_tools.get_dvc_md5("does-not-exist.dvc", tool_context=ctx)
     assert result.startswith("ERROR")
@@ -496,6 +615,14 @@ def test_get_dvc_md5_missing_file_returns_error(ctx):
 def test_get_repo_url_missing_file_returns_error(ctx):
     result = git_tools.get_repo_url_from_dvc_file("missing.dvc", tool_context=ctx)
     assert "File not found" in result
+
+
+def test_get_repo_url_dvc_file_without_repo_url_returns_error(ctx, git_repo):
+    no_url_dvc = os.path.join(git_repo, "no_url.dvc")
+    with open(no_url_dvc, "w") as f:
+        f.write("outs:\n- md5: abc\n  path: data.csv\n")
+    result = git_tools.get_repo_url_from_dvc_file("no_url.dvc", tool_context=ctx)
+    assert "No repository URL found" in result
 
 
 def test_get_repo_url_no_repo_configured_returns_error():
@@ -515,6 +642,107 @@ def test_find_meta_yaml_files_explicit_branch(ctx):
 def test_find_meta_yaml_files_unknown_branch_returns_error(ctx):
     result = git_tools.find_meta_yaml_files(branch="nope", tool_context=ctx)
     assert result.startswith("ERROR")
+
+
+# ---------------------------------------------------------------------------
+# get_dvc_import_info
+# ---------------------------------------------------------------------------
+
+
+def test_get_dvc_import_info_returns_url_and_rev_lock(ctx):
+    result = git_tools.get_dvc_import_info("imported.dvc", tool_context=ctx)
+    assert "https://gitlab.example.com/geg/beach-project.git" in result
+    assert "abc123def456789" in result  # pragma: allowlist secret
+    assert "data/beach" in result
+    assert "deadbeefcafe" in result
+
+
+def test_get_dvc_import_info_local_dvc_file_note(ctx):
+    # foo.dvc uses meta.repo_url (not deps[].repo) → no import metadata note
+    result = git_tools.get_dvc_import_info("foo.dvc", tool_context=ctx)
+    assert "No DVC import metadata found" in result
+
+
+def test_get_dvc_import_info_missing_file_returns_error(ctx):
+    result = git_tools.get_dvc_import_info("nonexistent.dvc", tool_context=ctx)
+    assert result.startswith("ERROR")
+
+
+def test_get_dvc_import_info_requires_tool_context():
+    assert git_tools.get_dvc_import_info("x.dvc") == "ERROR: tool_context is required."
+
+
+# ---------------------------------------------------------------------------
+# read_file_content
+# ---------------------------------------------------------------------------
+
+
+def test_read_file_content_reads_readme(ctx):
+    result = git_tools.read_file_content("README.md", tool_context=ctx)
+    assert "Beach Project" in result
+    assert "make data" in result
+
+
+def test_read_file_content_lists_directory(ctx):
+    result = git_tools.read_file_content(".", tool_context=ctx)
+    assert "is a directory" in result
+    assert "README.md" in result
+
+
+def test_read_file_content_missing_file_returns_error(ctx):
+    result = git_tools.read_file_content("no_such_file.txt", tool_context=ctx)
+    assert result.startswith("ERROR")
+
+
+def test_read_file_content_requires_tool_context():
+    assert (
+        git_tools.read_file_content("README.md") == "ERROR: tool_context is required."
+    )
+
+
+# ---------------------------------------------------------------------------
+# clone_repository_at_revision
+# ---------------------------------------------------------------------------
+
+
+def test_clone_repository_at_revision_invalid_url_returns_error():
+    ctx = fake_ctx()
+    result = git_tools.clone_repository_at_revision(
+        "https://invalid.nonexistent.example/repo.git", "abc123", ctx
+    )
+    assert result.startswith("ERROR")
+
+
+def test_clone_repository_at_revision_success(git_repo):
+    from git import Repo as GitRepo
+
+    head_hash = GitRepo(git_repo).head.commit.hexsha
+    ctx = fake_ctx()
+    result = git_tools.clone_repository_at_revision(git_repo, head_hash, ctx)
+    assert "Successfully cloned" in result
+    assert ctx.state.get("repo_path")
+
+
+def test_clone_repository_at_revision_bad_commit_returns_error(git_repo):
+    ctx = fake_ctx()
+    result = git_tools.clone_repository_at_revision(
+        git_repo, "0000000000000000000000000000000000000000", ctx
+    )
+    assert result.startswith("ERROR")
+
+
+# ---------------------------------------------------------------------------
+# read_file_content — additional coverage
+# ---------------------------------------------------------------------------
+
+
+def test_read_file_content_truncates_large_files(ctx, git_repo, tmp_path):
+    large_file = os.path.join(git_repo, "big.txt")
+    with open(large_file, "w") as f:
+        f.write("x" * 25_000)
+    result = git_tools.read_file_content("big.txt", tool_context=ctx)
+    assert "truncated" in result
+    assert len(result) < 25_000
 
 
 def test_inspect_parquet_missing_file_returns_error(ctx):
