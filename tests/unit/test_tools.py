@@ -276,8 +276,30 @@ def test_get_dvc_md5_returns_hash(ctx):
 
 
 def test_get_repo_url_from_dvc_file(ctx):
+    # Legacy fallback: meta.repo_url (the `foo.dvc` fixture uses this form).
     result = git_tools.get_repo_url_from_dvc_file("foo.dvc", tool_context=ctx)
     assert result == "https://example.com/foo.git"
+
+
+def test_get_repo_url_from_dvc_import_deps(ctx, git_repo):
+    # DVC import form: the source repo lives under deps[].repo.url, which the
+    # registry's real .dvc files use. This must take priority and be found.
+    import os
+
+    with open(os.path.join(git_repo, "imported.dvc"), "w") as f:
+        f.write(
+            "frozen: true\n"
+            "deps:\n"
+            "- path: data\n"
+            "  repo:\n"
+            "    url: git@gitlab.ethz.ch:geg/project.git\n"
+            "    rev_lock: abc123\n"
+            "outs:\n"
+            "- md5: deadbeef\n"
+            "  path: data\n"
+        )
+    result = git_tools.get_repo_url_from_dvc_file("imported.dvc", tool_context=ctx)
+    assert result == "git@gitlab.ethz.ch:geg/project.git"
 
 
 def test_find_commit_by_hash_string(ctx):
@@ -379,6 +401,20 @@ def test_inspect_yaml_file_missing_returns_error(ctx):
     assert result.startswith("ERROR: File not found")
 
 
+def test_resolve_pull_targets(git_repo):
+    from agent.tools.data_tools import _resolve_pull_targets
+
+    # A directory expands to every `.dvc` file beneath it (so the agent can
+    # pull a whole project dir, which bare `dvc pull <dir>` does not support).
+    assert _resolve_pull_targets(git_repo, ".") == ["foo.dvc"]
+    # A `.dvc` file passes through unchanged.
+    assert _resolve_pull_targets(git_repo, "foo.dvc") == ["foo.dvc"]
+    # A tracked data path prefers its sibling `.dvc` file when present.
+    assert _resolve_pull_targets(git_repo, "foo") == ["foo.dvc"]
+    # An unknown plain path is passed through as-is.
+    assert _resolve_pull_targets(git_repo, "nope.parquet") == ["nope.parquet"]
+
+
 def test_list_files_in_directory(ctx, git_repo):
     result = data_tools.list_files_in_directory(".", tool_context=ctx)
     assert "foo.dvc" in result
@@ -462,10 +498,13 @@ def test_get_repo_url_missing_file_returns_error(ctx):
     assert "File not found" in result
 
 
-def test_get_repo_url_no_repo_path_returns_error():
+def test_get_repo_url_no_repo_configured_returns_error():
+    # With no repo in state and no REPO_URL, the tool now auto-resolves the
+    # registry like the other tools — and reports the configuration error.
     ctx = fake_ctx()
     result = git_tools.get_repo_url_from_dvc_file("foo.dvc", tool_context=ctx)
-    assert "Repository path not set" in result
+    assert "No repository configured" in result
+    assert "REPO_URL" in result
 
 
 def test_find_meta_yaml_files_explicit_branch(ctx):

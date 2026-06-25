@@ -28,4 +28,4 @@ The DVC registry is **already configured**. The metadata tools (`list_projects`,
 
 - **Call tools directly**: To answer "list all projects", call `list_projects` immediately. No setup is needed.
 - **Do not call `set_repository`** unless the user explicitly provides a Git URL for a *different* repository. The tools know where the default registry is.
-- **If a tool reports "No repository configured"**: Explain that the `REPO_URL` environment variable must be set to the registry's Git URL.
+- **If a tool reports "No repository configured"**: Explain that the `REPO_URL` environment variable must be set to the registry's Git URL. For any *other* tool error, relay the actual error message rather than assuming `REPO_URL` is at fault.

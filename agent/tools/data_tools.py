@@ -32,11 +32,49 @@ def _apply_dvc_local_config(repo_path: str) -> None:
         f.write(config_local)
 
 
+def _resolve_pull_targets(repo_path: str, file_path: str) -> list[str]:
+    """Resolve a user-supplied path to concrete `dvc pull` targets.
+
+    `dvc pull` expects a `.dvc` file, a stage name, or a tracked output path —
+    not an arbitrary directory. This maps the common inputs an agent supplies:
+
+    - a directory  -> every `*.dvc` file found beneath it
+    - a `.dvc` file -> itself
+    - a data path  -> its sibling `<path>.dvc` if that exists, else the path
+    """
+    if os.path.isabs(file_path):
+        file_path = os.path.relpath(file_path, repo_path)
+    full = os.path.join(repo_path, file_path)
+
+    if os.path.isdir(full):
+        targets: list[str] = []
+        for root, _dirs, files in os.walk(full):
+            for name in files:
+                if name.endswith(".dvc"):
+                    abs_dvc = os.path.join(root, name)
+                    targets.append(os.path.relpath(abs_dvc, repo_path))
+        return sorted(targets)
+
+    if file_path.endswith(".dvc"):
+        return [file_path]
+
+    # A data/output path: prefer the sibling `.dvc` file that tracks it.
+    if os.path.exists(full + ".dvc"):
+        return [file_path + ".dvc"]
+    return [file_path]
+
+
 def dvc_pull(
     file_path: str | None = None, tool_context: ToolContext | None = None
 ) -> str:
     """
-    Run 'dvc pull' on a specific file or the entire repository.
+    Run 'dvc pull' to download DVC-tracked data from the configured remote.
+
+    Args:
+        file_path: Optional target. May be a project directory (all `.dvc`
+                   files beneath it are pulled), a specific `.dvc` file, or a
+                   tracked data path. Omit to pull the entire repository.
+        tool_context: Injected by ADK.
     """
     if tool_context is None:
         return "ERROR: tool_context is required."
@@ -49,10 +87,13 @@ def dvc_pull(
 
         command = [sys.executable, "-m", "dvc", "pull"]
         if file_path:
-            # Ensure the file path is relative to the repo root
-            if os.path.isabs(file_path):
-                file_path = os.path.relpath(file_path, repo_path)
-            command.append(file_path)
+            targets = _resolve_pull_targets(repo_path, file_path)
+            if not targets:
+                return (
+                    f"ERROR: No DVC-tracked files (`*.dvc`) found under "
+                    f"'{file_path}'. Nothing to pull."
+                )
+            command.extend(targets)
 
         result = subprocess.run(
             command,
@@ -286,8 +327,11 @@ def dvc_remote_list(tool_context: ToolContext | None = None) -> str:
 
     try:
         # The DVC API is complex for just listing remotes; shell out for simplicity.
+        # No `--local`: the registry's remote is defined in `.dvc/config` (repo
+        # config), which `--local` would exclude. Invoke via `-m dvc` so it
+        # resolves to the same interpreter as the other tools (no PATH reliance).
         result = subprocess.run(
-            ["dvc", "remote", "list", "--local"],
+            [sys.executable, "-m", "dvc", "remote", "list"],
             cwd=repo_path,
             check=True,
             capture_output=True,

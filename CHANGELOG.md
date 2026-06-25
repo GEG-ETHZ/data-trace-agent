@@ -7,6 +7,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Fixed
+
+- `get_repo_url_from_dvc_file` now reads the source repository URL from
+  `deps[].repo.url` (the DVC-import form the registry actually uses) instead of
+  a non-existent `meta.repo_url` key, so code-analysis routing finds the
+  project repo. It also auto-resolves the registry like the other tools rather
+  than requiring `set_repository` first
+- `list_projects` now extracts the project repository from
+  `source.gitlab-or-github-url` and surfaces `source.dvc-remote-url`, and pairs
+  `.dvc` files by directory rather than by exact base name (so e.g.
+  `beach-project.meta.yaml` resolves against its sibling `data-location.dvc`)
+- `dvc_remote_list` no longer passes `--local`, which hid the registry's real
+  `gcs` remote defined in `.dvc/config`; it also invokes DVC via
+  `python -m dvc` for parity with the other DVC tools (no PATH reliance)
+- `dvc_pull` now accepts a project directory (expanding to every `.dvc` file
+  beneath it) or a tracked data path, not only an exact target — fixing the
+  "does not exist as an output or a stage name" failure when pulling a folder
+- Prompts: corrected the data-analysis instruction that wrongly forbade passing
+  a `.dvc` file to `dvc_pull`, and stopped the agents from reflexively blaming
+  `REPO_URL` for unrelated tool errors (auth failures, missing files) — they
+  now relay the actual error message
+
 ### Added
 
 - Initial agent scaffold from [agent-deployment-template](https://github.com/GEG-ETHZ/agent-deployment-template)

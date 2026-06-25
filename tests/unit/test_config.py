@@ -26,14 +26,15 @@ def test_runtime_env_vars_plain_token(monkeypatch):
 
 
 def test_runtime_env_vars_secret_ref(monkeypatch):
-    monkeypatch.setenv("GIT_AUTH_TOKEN_SECRET", "my-git-token")
+    monkeypatch.setenv("GIT_AUTH_TOKEN_SECRET", "my_git_token")
     monkeypatch.delenv("GIT_AUTH_TOKEN_SECRET_VERSION", raising=False)
 
     env = runtime_env_vars()
     ref = env["GIT_AUTH_TOKEN"]
 
-    # A Secret Manager reference, not a plain value.
-    assert ref.secret == "my-git-token"  # pragma: allowlist secret
+    # A Secret Manager reference, not a plain value. Secret names use
+    # underscores — Agent Engine rejects hyphens (see config validation).
+    assert ref.secret == "my_git_token"  # pragma: allowlist secret
     assert ref.version == "latest"
 
 
@@ -47,13 +48,13 @@ def test_runtime_env_vars_dvc_config_plain(monkeypatch):
 
 
 def test_runtime_env_vars_dvc_config_secret_ref(monkeypatch):
-    monkeypatch.setenv("DVC_CONFIG_LOCAL_SECRET", "dvc-config")
+    monkeypatch.setenv("DVC_CONFIG_LOCAL_SECRET", "dvc_config")
     monkeypatch.setenv("DVC_CONFIG_LOCAL_SECRET_VERSION", "3")
 
     env = runtime_env_vars()
     ref = env["DVC_CONFIG_LOCAL"]
 
-    assert ref.secret == "dvc-config"  # pragma: allowlist secret
+    assert ref.secret == "dvc_config"  # pragma: allowlist secret
     assert ref.version == "3"
 
 

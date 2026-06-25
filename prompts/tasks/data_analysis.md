@@ -16,9 +16,9 @@ The DVC registry is the default repository and is **automatically cloned from th
 1.  **Identify the Project and Repository**: Make sure you are operating in the correct repository. The default is the DVC registry. Only switch repositories if the project's data is located elsewhere (you would know this from the metadata analysis step).
 
 2.  **Pull the Data**:
-    -   If you are working on a specific project (e.g., "beach-project" which might be located at `datasets/beach-project`), the most targeted way to get its data is to run `dvc_pull` on the project's directory. For example: `dvc_pull('datasets/beach-project')`.
+    -   If you are working on a specific project (e.g., "beach-project" which might be located at `datasets/beach-project`), the most targeted way to get its data is to run `dvc_pull` on the project's directory. For example: `dvc_pull('datasets/beach-project')`. The tool finds every `.dvc` file beneath that directory and pulls it.
+    -   You may also pass a specific `.dvc` file (e.g. `dvc_pull('datasets/tango/flexible-df-manual-sweep/results.parquet.dvc')`) or a tracked data path — all three forms work.
     -   If you're not sure which files to pull or if you need data from multiple projects, it's often easiest to pull all data for the entire repository by calling `dvc_pull()` with no arguments.
-    -   **Important**: Never pass a `.dvc` file path to `dvc_pull`. The tool acts on directories or data file paths to download the data tracked by `.dvc` files.
 
 3.  **Find and Inspect the Data Files**:
     -   After pulling, use `list_files_in_directory` on your project's directory (e.g., `datasets/beach-project`) to see the data files you've downloaded.

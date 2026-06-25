@@ -587,9 +587,11 @@ def list_projects(
             continue
 
         base = re.sub(r"\.meta\.ya?ml$", "", path, flags=re.IGNORECASE)
+        project_dir = os.path.dirname(path)
 
         summary = "No description available."
         repo_url = None
+        dvc_remote_url = None
         try:
             meta_blob = blobs_by_path[path]
             meta_content = meta_blob.data_stream.read().decode("utf-8")
@@ -597,7 +599,15 @@ def list_projects(
             if isinstance(meta_data, dict):
                 title = meta_data.get("title")
                 description = meta_data.get("description")
-                repo_url = (
+
+                # The registry schema stores provenance under `source:`.
+                source = meta_data.get("source")
+                if isinstance(source, dict):
+                    repo_url = source.get("gitlab-or-github-url") or source.get("url")
+                    dvc_remote_url = source.get("dvc-remote-url")
+
+                # Legacy / alternative top-level fields.
+                repo_url = repo_url or (
                     meta_data.get("repository")
                     or meta_data.get("repo")
                     or meta_data.get("url")
@@ -612,29 +622,32 @@ def list_projects(
         except (yaml.YAMLError, UnicodeDecodeError) as exc:
             logger.warning("Could not parse %s: %s", path, exc)
 
-        # If repo_url is not in .meta.yaml, check the corresponding .dvc file.
+        # If repo_url is not in .meta.yaml, inspect the `.dvc` file(s) sitting in
+        # the same directory (their base name need not match the meta file —
+        # e.g. `beach-project.meta.yaml` is paired with `data-location.dvc`).
         if not repo_url:
-            dvc_path = f"{base}.dvc"
-            if dvc_path in blobs_by_path:
+            for dvc_path in sorted(blobs_by_path):
+                if os.path.dirname(dvc_path) != project_dir or not dvc_path.endswith(
+                    ".dvc"
+                ):
+                    continue
                 try:
-                    dvc_blob = blobs_by_path[dvc_path]
-                    dvc_content = dvc_blob.data_stream.read().decode("utf-8")
+                    dvc_content = (
+                        blobs_by_path[dvc_path].data_stream.read().decode("utf-8")
+                    )
                     dvc_data = yaml.safe_load(dvc_content)
-                    if (
-                        isinstance(dvc_data, dict)
-                        and "deps" in dvc_data
-                        and isinstance(dvc_data["deps"], list)
-                        and dvc_data["deps"]
-                    ):
-                        first_dep = dvc_data["deps"][0]
-                        if (
-                            isinstance(first_dep, dict)
-                            and "repo" in first_dep
-                            and isinstance(first_dep["repo"], dict)
-                        ):
-                            repo_url = first_dep["repo"].get("url")
                 except (yaml.YAMLError, UnicodeDecodeError) as exc:
                     logger.warning("Could not parse %s: %s", dvc_path, exc)
+                    continue
+                if not isinstance(dvc_data, dict):
+                    continue
+                for dep in dvc_data.get("deps") or []:
+                    if isinstance(dep, dict) and isinstance(dep.get("repo"), dict):
+                        repo_url = dep["repo"].get("url")
+                        if repo_url:
+                            break
+                if repo_url:
+                    break
 
         project_info = {
             "project": base,
@@ -643,6 +656,8 @@ def list_projects(
         }
         if repo_url:
             project_info["repository"] = repo_url
+        if dvc_remote_url:
+            project_info["dvc_remote"] = dvc_remote_url
         projects.append(project_info)
 
     if not projects:
@@ -660,6 +675,8 @@ def list_projects(
         lines.append(f"  Summary: {project['summary']}")
         if "repository" in project:
             lines.append(f"  Repository: {project['repository']}")
+        if "dvc_remote" in project:
+            lines.append(f"  DVC remote: {project['dvc_remote']}")
     return "\n".join(lines)
 
 
@@ -865,25 +882,58 @@ def get_repo_url_from_dvc_file(
     file_path: str, tool_context: ToolContext | None = None
 ) -> str:
     """
-    Reads a .dvc file and extracts the repository URL from it.
+    Read a `.dvc` file and extract the source repository URL from it.
+
+    DVC import files (created by `dvc import`) record the source repository
+    under ``deps[].repo.url``. This tool returns that URL so the caller can
+    switch to the project's own repository for code analysis.
+
+    Args:
+        file_path: Path to the `.dvc` file, relative to the registry root
+                   (e.g. ``datasets/beach-project/data-location.dvc``).
+        tool_context: Injected by ADK.
+
+    Returns:
+        The repository URL, or an error message if none is found.
     """
     if tool_context is None:
         return "ERROR: tool_context is required."
     try:
-        repo_path = tool_context.state.get("repo_path")
-        if not repo_path:
-            return "ERROR: Repository path not set. Please use set_repository first."
+        repo = _get_repo(tool_context)
+    except ValueError as exc:
+        return f"ERROR: {exc}"
 
-        full_path = os.path.join(repo_path, file_path)
-        if not os.path.exists(full_path):
-            return f"ERROR: File not found at {full_path}."
+    working_dir = repo.working_dir
+    if not working_dir:
+        return "ERROR: The registry has no working tree to read files from."
 
+    full_path = os.path.join(working_dir, file_path)
+    if not os.path.exists(full_path):
+        return f"ERROR: File not found at '{file_path}' in the registry."
+
+    try:
         with open(full_path) as f:
             data = yaml.safe_load(f)
-            if "meta" in data and "repo_url" in data["meta"]:
-                return data["meta"]["repo_url"]
-            else:
-                return "ERROR: repo_url not found in the .dvc file's meta section."
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
+        return f"ERROR: Could not parse '{file_path}': {exc}"
 
-    except Exception as e:
-        return f"ERROR: Could not read .dvc file: {e}"
+    if not isinstance(data, dict):
+        return f"ERROR: '{file_path}' did not parse to a YAML mapping."
+
+    # DVC import: deps[].repo.url is the source repository.
+    for dep in data.get("deps") or []:
+        if isinstance(dep, dict) and isinstance(dep.get("repo"), dict):
+            url = dep["repo"].get("url")
+            if url:
+                return url
+
+    # Legacy fallback: an explicit meta.repo_url field.
+    meta = data.get("meta")
+    if isinstance(meta, dict) and meta.get("repo_url"):
+        return meta["repo_url"]
+
+    return (
+        f"ERROR: No repository URL found in '{file_path}'. Looked under "
+        "deps[].repo.url (DVC import) and meta.repo_url. This .dvc file may "
+        "track a local output rather than importing from another repository."
+    )
