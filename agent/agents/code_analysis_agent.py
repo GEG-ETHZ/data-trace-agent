@@ -17,6 +17,7 @@ from agent.tools import (
     get_dvc_md5,
     list_files,
     read_file_content,
+    switch_to_registry,
 )
 from deployment.config import resolve_model
 
@@ -30,6 +31,7 @@ code_analysis_agent = Agent(
     ),
     instruction=load_prompt("code_analysis_agent"),
     tools=[
+        switch_to_registry,
         clone_remote_repository,
         clone_repository_at_revision,
         get_dvc_import_info,

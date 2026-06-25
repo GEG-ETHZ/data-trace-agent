@@ -13,6 +13,10 @@ The DVC registry is the default repository and is **automatically cloned from th
 
 ## Procedure
 
+### Step 0 — Return to the DVC registry
+
+**Always call `switch_to_registry` before doing anything else.** A previous code-analysis step may have changed the active repository to a project source repo. `switch_to_registry` restores the active repository to the central DVC registry so that all DVC operations work correctly.
+
 ### Step 1 — Pull the data from the DVC registry
 
 Run `dvc_pull` on the project directory (e.g. `dvc_pull('datasets/beach-project')`) or on a specific `.dvc` file. This downloads the DVC-tracked data from the configured remote (typically a GCS bucket).

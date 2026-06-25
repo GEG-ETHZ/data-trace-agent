@@ -8,6 +8,9 @@ synthesises a final structured answer for the user.
 Tool inventory
 --------------
 set_repository                - Point the agent at a local Git repo directory or remote URL.
+switch_to_registry            - Restore the active repository to the DVC registry.
+initialize_registry           - Scan the DVC registry and persist results to session state.
+get_registry_context          - Retrieve the persisted registry scan from session state.
 find_meta_yaml_files          - Find and extract all `*.meta.yaml` files in a branch/commit.
 find_dvc_files                - Find and extract all `*.dvc` files in a branch/commit.
 list_projects                 - List projects by finding `*.meta.yaml` files.
@@ -45,6 +48,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _STATE_KEY = "repo_path"
+_REGISTRY_PATH_KEY = "registry_path"
+_REGISTRY_META_KEY = "registry_metadata"
+_REGISTRY_CONFIG_KEY = "registry_config"
+_REGISTRY_REMOTES_KEY = "registry_remotes"
 
 
 def _get_repo(tool_context: ToolContext) -> Repo:
@@ -75,6 +82,9 @@ def _get_repo(tool_context: ToolContext) -> Repo:
                 f"Could not clone the DVC registry from REPO_URL: {exc}"
             ) from exc
         tool_context.state[_STATE_KEY] = resolved
+        # Persist the registry path once so switch_to_registry can restore it later.
+        if not tool_context.state.get(_REGISTRY_PATH_KEY):
+            tool_context.state[_REGISTRY_PATH_KEY] = resolved
         repo_path = resolved
 
     try:
@@ -288,6 +298,37 @@ def set_repository(repo_path: str, tool_context: ToolContext) -> str:
         f"  Branches: {branch_count}\n"
         f"  Total commits (all branches): {commit_count}\n"
     )
+
+
+def switch_to_registry(tool_context: ToolContext) -> str:
+    """
+    Restore the active repository to the DVC registry.
+
+    Call this whenever the active repository has been switched to a project
+    repository (e.g. after ``clone_repository_at_revision`` or
+    ``clone_remote_repository``) and you need to return to the central DVC
+    registry to pull data, list projects, or read `*.meta.yaml` / `*.dvc` files.
+
+    If the registry has not been cloned yet in this session, it is cloned now
+    from the ``REPO_URL`` environment variable.
+
+    Returns:
+        Confirmation that the registry is now the active repository, or an error.
+    """
+    registry_path: str | None = tool_context.state.get(_REGISTRY_PATH_KEY)
+
+    if registry_path:
+        tool_context.state[_STATE_KEY] = registry_path
+        return f"Switched back to the DVC registry at '{registry_path}'."
+
+    # Registry not yet cloned — trigger the auto-clone via _get_repo.
+    try:
+        repo = _get_repo(tool_context)
+        return (
+            f"DVC registry cloned and set as active repository at '{repo.working_dir}'."
+        )
+    except ValueError as exc:
+        return f"ERROR: {exc}"
 
 
 def find_meta_yaml_files(
@@ -1070,6 +1111,93 @@ def read_file_content(
         return content
     except Exception as exc:
         return f"ERROR: Cannot read '{file_path}': {exc}"
+
+
+def initialize_registry(tool_context: ToolContext) -> str:
+    """
+    Scan the DVC registry and persist the results to session state.
+
+    Call this **once at the start of every session** before answering any
+    user questions. It runs three discovery steps in the DVC registry
+    repository and stores their results under dedicated session-state keys so
+    that the registry context survives context-window compression:
+
+    - ``registry_metadata``  — merged `*.meta.yaml` / `*.dvc` project records
+    - ``registry_config``    — top-level YAML files (GCP / BigQuery / GCS config)
+    - ``registry_remotes``   — configured DVC remotes (storage backends)
+
+    Once stored, call ``get_registry_context`` at any point in the session to
+    retrieve the full context without re-scanning.
+
+    Returns:
+        A brief summary confirming what was stored, or an error message.
+    """
+    meta = find_meta_yaml_files(tool_context=tool_context)
+    config = find_top_level_yaml_files(tool_context=tool_context)
+
+    from agent.tools.data_tools import (
+        dvc_remote_list,  # local import avoids circular dep
+    )
+
+    remotes = dvc_remote_list(tool_context=tool_context)
+
+    tool_context.state[_REGISTRY_META_KEY] = meta
+    tool_context.state[_REGISTRY_CONFIG_KEY] = config
+    tool_context.state[_REGISTRY_REMOTES_KEY] = remotes
+
+    meta_lines = meta.splitlines()
+    project_count = sum(
+        1 for line in meta_lines if line.startswith("[") and "] File:" in line
+    )
+    config_lines = config.splitlines()
+    config_count = sum(
+        1 for line in config_lines if line.startswith("[") and "] File:" in line
+    )
+
+    return (
+        f"Registry initialized and saved to session state.\n"
+        f"  • {project_count} project(s) in registry_metadata\n"
+        f"  • {config_count} top-level config file(s) in registry_config\n"
+        f"  • DVC remotes saved in registry_remotes\n"
+        f"Use get_registry_context() to retrieve this context at any point."
+    )
+
+
+def get_registry_context(tool_context: ToolContext) -> str:
+    """
+    Retrieve the DVC registry scan previously saved by ``initialize_registry``.
+
+    Returns the full registry context (project metadata, GCP/BigQuery config,
+    DVC remotes) from session state. This survives context-window compression
+    because it is stored in the session database, not the conversation history.
+
+    If the registry has not been initialized yet, returns an instruction to
+    call ``initialize_registry`` first.
+
+    Returns:
+        The full registry context as a formatted string, or an error message.
+    """
+    meta = tool_context.state.get(_REGISTRY_META_KEY)
+    config = tool_context.state.get(_REGISTRY_CONFIG_KEY)
+    remotes = tool_context.state.get(_REGISTRY_REMOTES_KEY)
+
+    if not meta and not config and not remotes:
+        return (
+            "Registry context not found in session state. "
+            "Call initialize_registry() first to scan the DVC registry."
+        )
+
+    sections: list[str] = []
+    if meta:
+        sections.append("=== Project Metadata (*.meta.yaml + *.dvc) ===\n" + meta)
+    if config:
+        sections.append(
+            "=== Top-level Config Files (GCP / BigQuery / GCS) ===\n" + config
+        )
+    if remotes:
+        sections.append("=== DVC Remotes ===\n" + remotes)
+
+    return "\n\n".join(sections)
 
 
 def get_repo_url_from_dvc_file(

@@ -41,5 +41,6 @@ Your default context is the **DVC registry**. Always start your search here.
 The DVC registry is **already configured**. The metadata tools (`list_projects`, `find_meta_yaml_files`, `find_top_level_yaml_files`, `find_dvc_files`, `dvc_remote_list`) automatically clone the registry from the `REPO_URL` environment variable on first use.
 
 - **Call tools directly**: To answer "list all projects", call `list_projects` immediately — no setup needed.
+- **If the active repository may have been switched** (e.g. a previous step cloned a project source repo), call `switch_to_registry` first to restore the DVC registry as the active repo.
 - **Do not call `set_repository`** unless the user explicitly provides a Git URL for a *different* repository.
 - **If a tool reports "No repository configured"**: Explain that the `REPO_URL` environment variable must be set.

@@ -23,6 +23,7 @@ from agent.tools import (
     find_top_level_yaml_files,
     list_projects,
     set_repository,
+    switch_to_registry,
 )
 from deployment.config import resolve_model
 
@@ -36,6 +37,7 @@ metadata_agent = Agent(
     ),
     instruction=load_prompt("metadata_agent"),
     tools=[
+        switch_to_registry,
         set_repository,
         list_projects,
         find_meta_yaml_files,

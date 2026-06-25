@@ -24,7 +24,13 @@ from agent.agents import (
     data_analysis_agent,
     metadata_agent,
 )
-from agent.tools import get_repo_url_from_dvc_file, set_repository
+from agent.tools import (
+    get_registry_context,
+    get_repo_url_from_dvc_file,
+    initialize_registry,
+    set_repository,
+    switch_to_registry,
+)
 from deployment.config import resolve_model
 
 root_agent = Agent(
@@ -36,6 +42,9 @@ root_agent = Agent(
     ),
     instruction=load_prompt("root_agent"),
     tools=[
+        initialize_registry,
+        get_registry_context,
+        switch_to_registry,
         set_repository,
         get_repo_url_from_dvc_file,
     ],

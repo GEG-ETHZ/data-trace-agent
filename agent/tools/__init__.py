@@ -19,11 +19,14 @@ from agent.tools.git_tools import (
     find_top_level_yaml_files,
     get_dvc_import_info,
     get_dvc_md5,
+    get_registry_context,
     get_repo_url_from_dvc_file,
+    initialize_registry,
     list_files,
     list_projects,
     read_file_content,
     set_repository,
+    switch_to_registry,
 )
 
 __all__ = [
@@ -37,11 +40,14 @@ __all__ = [
     "find_top_level_yaml_files",
     "get_dvc_import_info",
     "get_dvc_md5",
+    "get_registry_context",
     "get_repo_url_from_dvc_file",
+    "initialize_registry",
     "list_files",
     "list_projects",
     "read_file_content",
     "set_repository",
+    "switch_to_registry",
     # data_tools
     "analyze_parquet_file",
     "analyze_yaml_file",
