@@ -39,58 +39,45 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    subgraph TopLayer[" "]
-        direction LR
-        Actor([Actor])
+    Actor([Actor])
 
-        subgraph GCP["GCP"]
-            direction TD
-            subgraph Deployment["Gemini Enterprise Agent Deployment"]
-                direction TD
-                agent((agent))
-                tool_bq((tool<br>bigquery))
-                tool_storage((tool<br>storage))
-                tool_webhook((tool<br>webhook))
-            end
-            BigQuery[BigQuery]
-            GCS[GCS]
-            CloudFunction[Cloud Function]
+    subgraph GCP["Google Cloud Platform — Vertex AI Agent Engine"]
+        direction TB
+        root_agent((root_agent))
 
-            agent --> tool_bq
-            agent --> tool_storage
-            agent --> tool_webhook
-
-            tool_bq --> BigQuery
-            tool_storage --> GCS
-            tool_webhook --> CloudFunction
+        subgraph SubAgents["Sub-agents"]
+            direction LR
+            metadata_agent((metadata\nagent))
+            data_agent((data analysis\nagent))
+            code_agent((code analysis\nagent))
+            bq_agent((bigquery\nagent))
         end
 
-        Actor --> agent
+        root_agent --> metadata_agent
+        root_agent --> data_agent
+        root_agent --> code_agent
+        root_agent --> bq_agent
+
+        BigQuery[(BigQuery)]
+        GCS[(GCS\nDVC remote)]
+
+        bq_agent -->|SQL query| BigQuery
+        data_agent -->|dvc pull| GCS
     end
 
-    subgraph Gitlab["Gitlab"]
-        subgraph DVC_registry["DVC registry (git repo)"]
-            ProjectA_meta[Project A metadata]
-            ProjectB_meta[Project B metadata]
+    subgraph GitLab["GitLab"]
+        DVC_registry["DVC registry\n(*.meta.yaml + *.dvc)"]
+        subgraph ProjectRepos["Project repositories"]
+            direction LR
+            RepoA[Project A]
+            RepoB[Project B]
         end
-
-        subgraph ProjectA["Project A"]
-            DVC_remote_A[(DVC remote)] ~~~ Git_repo_A[Git repo]
-        end
-
-        subgraph ProjectB["Project B"]
-            DVC_remote_B[(DVC remote)] ~~~ Git_repo_B[Git repo]
-        end
+        DVC_registry -.->|tracks| ProjectRepos
     end
 
-    CloudFunction --> DVC_registry
-
-    DVC_registry --> ProjectA
-    DVC_registry --> ProjectB
-
-    Actor <--> Gitlab
-
-    style TopLayer fill:none,stroke:none,color:transparent
+    Actor -->|REST| root_agent
+    root_agent & metadata_agent & data_agent -->|clone / read| DVC_registry
+    code_agent -->|clone at rev_lock| ProjectRepos
 ```
 
 ## Quickstart
@@ -145,8 +132,16 @@ make deploy-prod          # deploy to prod
 | Variable | Required | Description |
 |---|---|---|
 | `GOOGLE_CLOUD_PROJECT` | Deploy | GCP project ID |
-| `GOOGLE_CLOUD_LOCATION` | Deploy | Vertex AI region (default: `us-central1`) |
+| `GOOGLE_CLOUD_LOCATION` | Deploy | Vertex AI region (default: `europe-west1`) |
 | `GCS_STAGING_BUCKET` | Deploy | GCS bucket for Agent Engine artefacts |
+| `REPO_URL` | No | Remote Git URL of the DVC registry; cloned on first use |
+| `GIT_AUTH_TOKEN` | No | Git token (deploy token / PAT) for cloning private repos in headless runtimes |
+| `GIT_AUTH_HOST` | No | Host the token is valid for (defaults to the host of `REPO_URL`) |
+| `GIT_AUTH_USERNAME` | No | Username for token-HTTPS clones (default: `oauth2`) |
+| `GIT_AUTH_TOKEN_SECRET` | No | Secret Manager secret id for the Git token (preferred at deploy) |
+| `AGENT_ENGINE_SERVICE_ACCOUNT` | No | Service account the deployed agent runs as; grant it read on DVC remote buckets |
+| `DVC_CONFIG_LOCAL` | No | Verbatim DVC workspace config for config-based remotes (WebDAV, SSH) |
+| `DVC_CONFIG_LOCAL_SECRET` | No | Secret Manager secret id for `DVC_CONFIG_LOCAL` |
 | `AGENT_ENGINE_RESOURCE_NAME` | No | Existing resource to update (omit = create new) |
 | `MODEL_PROVIDER` | No | `google` \| `anthropic` \| `openai` \| `litellm` |
 | `GOOGLE_API_KEY` | Local dev | Not needed on GCP (uses ADC) |

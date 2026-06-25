@@ -38,9 +38,23 @@ make setup-gcp   # creates SA, enables APIs, generates key for CI
 agent/
   __init__.py          load_prompt() — reads prompts/prompts.yaml and concatenates .md files
   agent.py             root_agent definition (ADK syntax; this is the entrypoint)
+  agents/
+    bigquery_agent.py        BigQuery query sub-agent
+    code_analysis_agent.py   clone repos, map DVC hashes to commits, analyse code
+    data_analysis_agent.py   pull DVC data, inspect Parquet / YAML files
+    metadata_agent.py        extract *.meta.yaml / *.dvc metadata from the registry
   tools/
     __init__.py        re-exports all tools
-    example_tools.py   get_current_datetime, web_search
+    bigquery_tools.py  query_bigquery
+    data_tools.py      dvc_pull, dvc_list_files, dvc_remote_list, inspect_parquet_file,
+                       analyze_parquet_file, inspect_yaml_file, analyze_yaml_file,
+                       list_files_in_directory
+    git_tools.py       set_repository, find_meta_yaml_files, find_top_level_yaml_files,
+                       list_projects, find_dvc_files, clone_remote_repository,
+                       clone_repository_at_revision, get_dvc_import_info, get_dvc_md5,
+                       find_commit_by_hash_string, checkout_commit, list_files,
+                       read_file_content, get_repo_url_from_dvc_file,
+                       initialize_registry, get_registry_context, switch_to_registry
     response_models.py Pydantic schemas for tool return types
 prompts/
   prompts.yaml         registry: which .md files load into which agents
@@ -48,12 +62,17 @@ prompts/
     base.md            always-on identity and style instructions
     safety.md          refusal and safety guidelines
   tasks/
-    example_task.md    task-specific instructions (replace with your use case)
+    root_agent.md      session initialization and delegation instructions
+    metadata.md        metadata extraction task instructions
+    data_analysis.md   DVC pull and data analysis task instructions
+    code_analysis.md   code analysis and reproducibility task instructions
+    bigquery.md        BigQuery query task instructions
 deployment/
   config.py            resolve_model() + DeploymentConfig dataclass
   deploy.py            CLI: deploy to Agent Engine (create or update)
   scripts/
     setup_gcp.sh       one-time GCP bootstrap
+    upload_secret.sh   upload a secret to Secret Manager
     read_logs.sh       stream Cloud Logging
     read_traces.sh     open Cloud Trace in browser
 tests/
@@ -86,7 +105,7 @@ tests/
 
 ## How to add a tool
 
-1. Write the function in `agent/tools/example_tools.py` (or create a new file in `agent/tools/`)
+1. Write the function in an existing file under `agent/tools/` (e.g. `git_tools.py`) or create a new module there
 2. Add type annotations and a docstring — ADK uses these to build the tool schema
 3. Export from `agent/tools/__init__.py`
 4. Add to `tools=[...]` in `agent/agent.py`
@@ -137,7 +156,7 @@ Set `MODEL_PROVIDER` in `.env`:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `GOOGLE_CLOUD_PROJECT` | Deploy only | — | GCP project ID |
-| `GOOGLE_CLOUD_LOCATION` | Deploy only | `us-central1` | Vertex AI region |
+| `GOOGLE_CLOUD_LOCATION` | Deploy only | `europe-west1` | Vertex AI region |
 | `GCS_STAGING_BUCKET` | Deploy only | — | GCS bucket for Agent Engine artefacts |
 | `REPO_URL` | No | — | Remote Git URL of the DVC registry; cloned on first use as the default repository |
 | `GIT_AUTH_TOKEN` | No | — | Git token (deploy token / PAT) for cloning private repos in headless runtimes (no SSH key). When set, repo URLs on the matching host are cloned over token-HTTPS instead of SSH |

@@ -7,6 +7,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- `initialize_registry` tool: scans the DVC registry at session start (`find_meta_yaml_files`,
+  `find_top_level_yaml_files`, `dvc_remote_list`) and **persists the results to ADK session
+  state** (`registry_metadata`, `registry_config`, `registry_remotes`) so the registry context
+  survives context-window compression for the entire session
+- `get_registry_context` tool: retrieves the persisted registry scan from session state — call
+  it to restore full registry context in a long conversation without re-scanning
+- `switch_to_registry` tool: restores the DVC registry as the active repository after a
+  code-analysis step has switched `repo_path` to a project source repo; the registry clone
+  path is now stored in a dedicated `registry_path` session-state key that is never
+  overwritten by project-repo clones
+- All sub-agents (`metadata_agent`, `data_analysis_agent`, `code_analysis_agent`) now include
+  `switch_to_registry` in their tool lists
+- `data_analysis_agent` prompt instructs it to call `switch_to_registry` as Step 0 before any
+  DVC operation, so DVC commands always target the central registry
+
 ### Fixed
 
 - `get_repo_url_from_dvc_file` now reads the source repository URL from
