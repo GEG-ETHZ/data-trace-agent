@@ -41,6 +41,8 @@ import yaml
 from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
 from google.adk.tools import ToolContext
 
+from agent.observability import instrument
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -265,6 +267,7 @@ def _render_yaml_value(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+@instrument
 def set_repository(repo_path: str, tool_context: ToolContext) -> str:
     """
     Switch to a *different* Git repository, given its remote Git URL.
@@ -300,6 +303,7 @@ def set_repository(repo_path: str, tool_context: ToolContext) -> str:
     )
 
 
+@instrument
 def switch_to_registry(tool_context: ToolContext) -> str:
     """
     Restore the active repository to the DVC registry.
@@ -331,6 +335,7 @@ def switch_to_registry(tool_context: ToolContext) -> str:
         return f"ERROR: {exc}"
 
 
+@instrument
 def find_meta_yaml_files(
     branch: str = "main",
     commit: str | None = None,
@@ -499,6 +504,7 @@ def _is_top_level_yaml(path: str) -> bool:
     )
 
 
+@instrument
 def find_top_level_yaml_files(
     branch: str = "main",
     commit: str | None = None,
@@ -607,6 +613,7 @@ def find_top_level_yaml_files(
     return "\n".join(lines)
 
 
+@instrument
 def list_projects(
     branch: str = "main",
     commit: str | None = None,
@@ -738,6 +745,7 @@ def list_projects(
     return "\n".join(lines)
 
 
+@instrument
 def find_dvc_files(
     branch: str = "main",
     commit: str | None = None,
@@ -836,6 +844,7 @@ def find_dvc_files(
     return "\n".join(lines)
 
 
+@instrument
 def clone_remote_repository(
     repo_url: str,
     tool_context: ToolContext,
@@ -855,6 +864,7 @@ def clone_remote_repository(
         return f"ERROR: Could not clone repository — {exc}"
 
 
+@instrument
 def get_dvc_md5(
     file_path: str,
     tool_context: ToolContext | None = None,
@@ -883,6 +893,7 @@ def get_dvc_md5(
         return f"ERROR: An unexpected error occurred: {e}"
 
 
+@instrument
 def find_commit_by_hash_string(
     hash_string: str,
     tool_context: ToolContext | None = None,
@@ -904,6 +915,7 @@ def find_commit_by_hash_string(
         return f"ERROR: An unexpected error occurred: {e}"
 
 
+@instrument
 def checkout_commit(
     commit_hash: str,
     tool_context: ToolContext | None = None,
@@ -923,6 +935,7 @@ def checkout_commit(
         return f"ERROR: An unexpected error occurred: {e}"
 
 
+@instrument
 def list_files(tool_context: ToolContext | None = None) -> str:
     """
     List all files in the current checkout of the repository.
@@ -936,6 +949,7 @@ def list_files(tool_context: ToolContext | None = None) -> str:
         return f"ERROR: An unexpected error occurred: {e}"
 
 
+@instrument
 def clone_repository_at_revision(
     repo_url: str,
     commit_hash: str,
@@ -976,6 +990,7 @@ def clone_repository_at_revision(
         return f"ERROR: {exc}"
 
 
+@instrument
 def get_dvc_import_info(
     file_path: str,
     tool_context: ToolContext | None = None,
@@ -1058,6 +1073,7 @@ def get_dvc_import_info(
     return "\n".join(lines)
 
 
+@instrument
 def read_file_content(
     file_path: str,
     tool_context: ToolContext | None = None,
@@ -1113,6 +1129,7 @@ def read_file_content(
         return f"ERROR: Cannot read '{file_path}': {exc}"
 
 
+@instrument
 def initialize_registry(tool_context: ToolContext) -> str:
     """
     Scan the DVC registry and persist the results to session state.
@@ -1163,6 +1180,7 @@ def initialize_registry(tool_context: ToolContext) -> str:
     )
 
 
+@instrument
 def get_registry_context(tool_context: ToolContext) -> str:
     """
     Retrieve the DVC registry scan previously saved by ``initialize_registry``.
@@ -1200,6 +1218,7 @@ def get_registry_context(tool_context: ToolContext) -> str:
     return "\n\n".join(sections)
 
 
+@instrument
 def get_repo_url_from_dvc_file(
     file_path: str, tool_context: ToolContext | None = None
 ) -> str:
