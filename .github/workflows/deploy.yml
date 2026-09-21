@@ -1,8 +1,15 @@
 name: Deploy
 
+# Manual only, deliberately. This previously fired on every push to main with no
+# dependency on ci.yml, so a red build still deployed — against a live Agent Engine
+# resource. It also forwarded none of the Git/DVC runtime variables below, so a
+# CI-triggered deploy produced an agent that could not clone the registry, silently
+# replacing a working deployment with a broken one.
+#
+# Re-enabling push-triggered CD needs three things first: the runtime secrets and
+# variables below actually configured, a `dev` GitHub Environment to exist, and a
+# `workflow_run` gate on ci.yml concluding successfully.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
@@ -13,6 +20,13 @@ on:
         options:
           - dev
           - prod
+      ref:
+        description: "Git ref to deploy (tag, branch or SHA). Empty deploys the current ref. Use a deployed-* tag to roll back."
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
@@ -21,6 +35,8 @@ jobs:
     environment: ${{ github.event.inputs.environment || 'prod' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -46,7 +62,19 @@ jobs:
           GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION }}
           GCS_STAGING_BUCKET: ${{ secrets.GCS_STAGING_BUCKET }}
           AGENT_ENGINE_RESOURCE_NAME: ${{ vars.AGENT_ENGINE_RESOURCE_NAME }}
+          AGENT_ENGINE_SERVICE_ACCOUNT: ${{ vars.AGENT_ENGINE_SERVICE_ACCOUNT }}
           MODEL_PROVIDER: ${{ vars.MODEL_PROVIDER || 'google' }}
+          # Runtime configuration the agent needs to clone the registry and pull
+          # DVC data. Omitting these does not fail the deploy — it produces an
+          # agent that cannot reach its data. See runtime_env_vars() in
+          # deployment/config.py for the full allowlist.
+          REPO_URL: ${{ vars.REPO_URL }}
+          GIT_AUTH_HOST: ${{ vars.GIT_AUTH_HOST }}
+          GIT_AUTH_USERNAME: ${{ vars.GIT_AUTH_USERNAME }}
+          # Secret Manager secret *names*, not values — config.py turns these into
+          # SecretRefs. Alphanumeric and underscores only; Agent Engine rejects hyphens.
+          GIT_AUTH_TOKEN_SECRET: ${{ vars.GIT_AUTH_TOKEN_SECRET }}
+          DVC_CONFIG_LOCAL_SECRET: ${{ vars.DVC_CONFIG_LOCAL_SECRET }}
 
       - name: Write deployment summary
         if: success()
@@ -54,5 +82,6 @@ jobs:
           echo "## Deployment successful" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**Environment:** ${{ github.event.inputs.environment || 'prod' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Ref:** ${{ github.event.inputs.ref || github.ref }}" >> "$GITHUB_STEP_SUMMARY"
           echo "**Resource:**" >> "$GITHUB_STEP_SUMMARY"
           cat .agent_engine_resource >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "N/A" >> "$GITHUB_STEP_SUMMARY"
