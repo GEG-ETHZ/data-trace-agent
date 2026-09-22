@@ -26,7 +26,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # 22, not 20: promptfoo requires >=22.22.0 and exits immediately below that.
+          # The template has pinned 22 since before this project's cruft pin, so the
+          # update had no diff to carry and this divergence survived the migration.
+          node-version: "22"
 
       - uses: astral-sh/setup-uv@v4
         with:

@@ -8,7 +8,7 @@ This file is read automatically by AI coding assistants (Claude Code, Cursor, Gi
 
 ## Installation and setup
 
-Prerequisites: Python 3.11+, `uv`, Node.js 20+, `gcloud` CLI
+Prerequisites: Python 3.11+, `uv`, Node.js 22+ (promptfoo requires >=22.22.0), `gcloud` CLI
 
 ```bash
 make install                  # install all dependencies

@@ -84,7 +84,7 @@ flowchart TD
 
 ### Prerequisites
 
-- Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 20+
+- Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 22+ (promptfoo requires >=22.22.0)
 - [gcloud CLI](https://cloud.google.com/sdk/docs/install) authenticated
 
 ### Local development
