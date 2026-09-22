@@ -108,9 +108,19 @@ def runtime_env_vars(project: str) -> dict:
     # observability.py builds no tracer without the flag, and CloudTraceSpanExporter()
     # otherwise resolves no project inside the Agent Engine container, failing every
     # export with "INVALID_ARGUMENT: Invalid project id in name!".
+    #
+    # GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY and OTEL_SEMCONV_STABILITY_OPT_IN are
+    # separate from the pair above: they are what the Agent Engine console itself reads
+    # to unlock its own dashboard/observability view for agents deployed via the API
+    # rather than the console UI. Deliberately not setting
+    # OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT here — it would have the console
+    # log full prompt/response content, which is a data-classification decision, not a
+    # deploy default.
     env: dict = {
         "CLOUD_TRACE_ENABLED": "true",
         "OTEL_EXPORTER_GCP_TRACE_PROJECT_ID": project,
+        "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
+        "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_latest_experimental",
     }
     for name in _FORWARDED_ENV_VARS:
         value = os.getenv(name)

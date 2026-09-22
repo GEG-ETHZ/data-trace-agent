@@ -22,6 +22,17 @@ def test_runtime_env_vars_traces_to_the_argument_not_the_ambient_project(monkeyp
     assert env["OTEL_EXPORTER_GCP_TRACE_PROJECT_ID"] == "my-project"
 
 
+def test_runtime_env_vars_enables_the_agent_engine_console_dashboard():
+    """Without these, the console shows the reduced dashboard for agents deployed via
+    the API instead of the console UI. Message-content capture is deliberately not
+    part of this — that is a data-classification decision, not a deploy default."""
+    env = runtime_env_vars("my-project")
+
+    assert env["GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY"] == "true"
+    assert env["OTEL_SEMCONV_STABILITY_OPT_IN"] == "gen_ai_latest_experimental"
+    assert "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT" not in env
+
+
 def test_runtime_env_vars_forwards_allowlist(monkeypatch):
     monkeypatch.setenv("REPO_URL", "https://gitlab.example.com/g/r.git")
     monkeypatch.setenv("MODEL_PROVIDER", "anthropic")
