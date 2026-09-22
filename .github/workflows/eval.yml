@@ -42,7 +42,11 @@ jobs:
         # Pinned rather than @latest: an unpinned npx resolves at run time, so a
         # promptfoo release can change eval results — or what executes — without a commit
         # here. Bump it deliberately and re-baseline the threshold in promptfoo.yaml.
-        run: npx --yes promptfoo@0.123.1 eval --config tests/evals/promptfoo.yaml --ci
+        # `uv run`, not bare `npx`: the python provider imports dotenv, and only `uv run`
+        # activates .venv for the whole subprocess tree promptfoo spawns.
+        # `-o output.json` is what the upload step below collects; without it that step
+        # silently uploaded nothing. `--ci` is not a promptfoo flag and never was.
+        run: uv run npx --yes promptfoo@0.123.1 eval --config tests/evals/promptfoo.yaml --no-progress-bar -j 2 -o output.json
         env:
           PROMPTFOO_DISABLE_TELEMETRY: "1"
           # The ADK's OpenTelemetry instrumentation detaches a context token from a
