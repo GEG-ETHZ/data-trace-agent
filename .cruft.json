@@ -2,6 +2,11 @@
   "template": "https://github.com/danielvogler/agent-deployment-template",
   "commit": "19c44df4de8f0d8e167529f6a904c2389b9cf42c",
   "checkout": null,
+  "skip": [
+    ".venv",
+    ".git",
+    "uv.lock"
+  ],
   "context": {
     "cookiecutter": {
       "project_name": "Data Trace Agent",
