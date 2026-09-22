@@ -1,6 +1,6 @@
 .PHONY: install dev lint format typecheck test test-unit test-integration eval \
         deploy-dev deploy-prod rollback health-check logs traces setup-gcp \
-        upload-secret pre-commit clean help
+        setup-monitoring upload-secret pre-commit clean help
 
 -include .env
 export
@@ -23,8 +23,9 @@ help:
 	@echo "  rollback         Redeploy a previous git ref: make rollback REF=<tag> [ENV=prod|dev]"
 	@echo "  health-check     Smoke-test the deployed resource without redeploying"
 	@echo "  logs             Stream Cloud Logging output for this agent"
-	@echo "  traces           Open Cloud Trace in browser"
+	@echo "  traces           List this agent's Cloud Trace spans"
 	@echo "  setup-gcp        One-time GCP project bootstrap"
+	@echo "  setup-monitoring One-time Cloud Monitoring dashboard + alert policy bootstrap"
 	@echo "  upload-secret    Upload a secret value to Secret Manager: make upload-secret NAME=<name> FILE=<path>"
 	@echo "  pre-commit       Run all pre-commit hooks on all files"
 	@echo "  clean            Remove build artefacts and caches"
@@ -87,10 +88,13 @@ logs:
 	bash deployment/scripts/read_logs.sh
 
 traces:
-	bash deployment/scripts/read_traces.sh
+	uv run python deployment/scripts/read_traces.py
 
 setup-gcp:
 	bash deployment/scripts/setup_gcp.sh
+
+setup-monitoring:
+	bash deployment/scripts/setup_monitoring.sh
 
 # Secret Manager names must be alphanumeric + underscores — Agent Engine rejects
 # hyphens despite its error message claiming otherwise.
