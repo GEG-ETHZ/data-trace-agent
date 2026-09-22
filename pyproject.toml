@@ -8,7 +8,13 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "google-adk>=1.0.0",
+    # Pinned exactly, unlike the rest. deploy.py derives the container's requirements
+    # from this list, and the agent is cloudpickled here and unpickled there: a version
+    # difference between the two breaks at request time, not at deploy time. A floor of
+    # >=1.0.0 let the container resolve 2.9.2 against a 2.2.0 pickle, and every request
+    # died in LlmAgent.canonical_model with `'NoneType' object is not subscriptable`,
+    # because the reconstructed model's pydantic private attributes were None.
+    "google-adk==2.2.0",
     "google-cloud-aiplatform[agent_engines]>=1.90.0",
     "litellm>=1.50.0",
     "pydantic>=2.0.0",
