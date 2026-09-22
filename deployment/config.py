@@ -88,7 +88,7 @@ def _set_secret_or_plain(env: dict, key: str) -> None:
         env[key] = os.environ[key]
 
 
-def runtime_env_vars() -> dict:
+def runtime_env_vars(project: str) -> dict:
     """Build the env-var map passed to the deployed agent at create/update time.
 
     Forwards a fixed allowlist of variables from the deploy environment so the
@@ -101,8 +101,17 @@ def runtime_env_vars() -> dict:
     GCS DVC remotes need no value here: the ``gs`` backend authenticates via the
     runtime service account's Application Default Credentials (see
     ``DeploymentConfig.service_account``).
+
+    ``project`` is the deploy target's project, not the ambient environment's.
     """
-    env: dict = {}
+    # Logs need nothing here; traces need both of these and neither is optional.
+    # observability.py builds no tracer without the flag, and CloudTraceSpanExporter()
+    # otherwise resolves no project inside the Agent Engine container, failing every
+    # export with "INVALID_ARGUMENT: Invalid project id in name!".
+    env: dict = {
+        "CLOUD_TRACE_ENABLED": "true",
+        "OTEL_EXPORTER_GCP_TRACE_PROJECT_ID": project,
+    }
     for name in _FORWARDED_ENV_VARS:
         value = os.getenv(name)
         if value:

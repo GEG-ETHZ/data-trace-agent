@@ -126,7 +126,7 @@ def deploy(env: str) -> None:
     from deployment.scripts.health_check import run_smoke_test
 
     config = DeploymentConfig.from_env()
-    env_vars = runtime_env_vars()
+    env_vars = runtime_env_vars(config.project)
 
     logger.info("Deploying [%s] to Vertex AI Agent Engine", env)
     logger.info("  Project:  %s", config.project)
