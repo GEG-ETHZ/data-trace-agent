@@ -9,6 +9,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Cloud Monitoring bootstrap: `make setup-monitoring` creates a dashboard (requests,
+  latency percentiles, CPU, memory) and alert policies for error rate and p95 latency
+  from the metrics Agent Engine already emits. Idempotent, run once per project
+- `deployment/scripts/read_traces.py` and `make traces` now list real Cloud Trace spans
+  via the Trace v1 API, with `--spans` to expand the `@instrument` tool spans nested under
+  ADK's `invoke_workflow` root
+- `lint-pr.yml` checks that a PR title is a conventional commit, since a squash merge
+  discards the commit subjects the local hook validated and uses the PR title instead
+- `cruft-check.yml` reports drift against the template weekly and on every PR
+  (non-blocking)
 - `initialize_registry` tool: scans the DVC registry at session start (`find_meta_yaml_files`,
   `find_top_level_yaml_files`, `dvc_remote_list`) and **persists the results to ADK session
   state** (`registry_metadata`, `registry_config`, `registry_remotes`) so the registry context
@@ -23,32 +33,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `switch_to_registry` in their tool lists
 - `data_analysis_agent` prompt instructs it to call `switch_to_registry` as Step 0 before any
   DVC operation, so DVC commands always target the central registry
-
-### Fixed
-
-- `get_repo_url_from_dvc_file` now reads the source repository URL from
-  `deps[].repo.url` (the DVC-import form the registry actually uses) instead of
-  a non-existent `meta.repo_url` key, so code-analysis routing finds the
-  project repo. It also auto-resolves the registry like the other tools rather
-  than requiring `set_repository` first
-- `list_projects` now extracts the project repository from
-  `source.gitlab-or-github-url` and surfaces `source.dvc-remote-url`, and pairs
-  `.dvc` files by directory rather than by exact base name (so e.g.
-  `beach-project.meta.yaml` resolves against its sibling `data-location.dvc`)
-- `dvc_remote_list` no longer passes `--local`, which hid the registry's real
-  `gcs` remote defined in `.dvc/config`; it also invokes DVC via
-  `python -m dvc` for parity with the other DVC tools (no PATH reliance)
-- `dvc_pull` now accepts a project directory (expanding to every `.dvc` file
-  beneath it) or a tracked data path, not only an exact target — fixing the
-  "does not exist as an output or a stage name" failure when pulling a folder
-- Prompts: corrected the data-analysis instruction that wrongly forbade passing
-  a `.dvc` file to `dvc_pull`, and stopped the agents from reflexively blaming
-  `REPO_URL` for unrelated tool errors (auth failures, missing files) — they
-  now relay the actual error message
-
-### Added
-
-- Initial agent scaffold from [agent-deployment-template](https://github.com/GEG-ETHZ/agent-deployment-template)
+- Initial agent scaffold from [agent-deployment-template](https://github.com/danielvogler/agent-deployment-template)
 - Git authentication for headless runtimes via GitLab Group Deploy Token
   (recommended) or Personal Access Token: when `GIT_AUTH_TOKEN` is set, repo
   URLs on the matching host (`GIT_AUTH_HOST`, defaulting to the `REPO_URL` host)
@@ -97,6 +82,40 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Tracing is now actually enabled on the deployed agent. All 26 tools were instrumented,
+  but `CLOUD_TRACE_ENABLED` and `OTEL_EXPORTER_GCP_TRACE_PROJECT_ID` were never set on the
+  resource, so no span was ever built or exported and `make traces` would always have come
+  back empty. Both are set from the deploy target's project, not the ambient environment
+- The promptfoo suite now loads `datasets/golden_set.jsonl`. It was documented as the
+  reference set but never referenced, with its cases hand-copied inline, so editing it
+  changed nothing. The inline duplicates are gone and a unit test fails if the wiring
+  regresses. `llm-rubric` grading is pinned to Vertex, since promptfoo otherwise defaults
+  the grader to OpenAI, which this project has no credentials for
+- `CLAUDE.md` no longer duplicates `AGENTS.md`; it is a pointer, and the pre-commit,
+  conventional-commit, CHANGELOG and slash-command sections it alone carried moved into
+  `AGENTS.md`. `AGENTS.md` gained the missing Observability reference, and its
+  "how to add a sub-agent" steps now name `agent/agents/`, where sub-agents actually live
+- Removed `SERPAPI_API_KEY` from the README, `AGENTS.md` and `CLAUDE.md`: no code has ever
+  read it
+- `get_repo_url_from_dvc_file` now reads the source repository URL from
+  `deps[].repo.url` (the DVC-import form the registry actually uses) instead of
+  a non-existent `meta.repo_url` key, so code-analysis routing finds the
+  project repo. It also auto-resolves the registry like the other tools rather
+  than requiring `set_repository` first
+- `list_projects` now extracts the project repository from
+  `source.gitlab-or-github-url` and surfaces `source.dvc-remote-url`, and pairs
+  `.dvc` files by directory rather than by exact base name (so e.g.
+  `beach-project.meta.yaml` resolves against its sibling `data-location.dvc`)
+- `dvc_remote_list` no longer passes `--local`, which hid the registry's real
+  `gcs` remote defined in `.dvc/config`; it also invokes DVC via
+  `python -m dvc` for parity with the other DVC tools (no PATH reliance)
+- `dvc_pull` now accepts a project directory (expanding to every `.dvc` file
+  beneath it) or a tracked data path, not only an exact target — fixing the
+  "does not exist as an output or a stage name" failure when pulling a folder
+- Prompts: corrected the data-analysis instruction that wrongly forbade passing
+  a `.dvc` file to `dvc_pull`, and stopped the agents from reflexively blaming
+  `REPO_URL` for unrelated tool errors (auth failures, missing files) — they
+  now relay the actual error message
 - Deployed agent no longer hangs in the Vertex AI playground. The deploy script
   passed `root_agent` wrapped in `AdkApp(session_service_builder=InMemorySessionService)`,
   which stored sessions in a single replica's memory; the playground's separate

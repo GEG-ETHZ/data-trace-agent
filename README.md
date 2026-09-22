@@ -122,9 +122,12 @@ make deploy-prod          # deploy to prod
 | `make typecheck` | Pyright |
 | `make deploy-dev` | Deploy to Agent Engine (dev) |
 | `make deploy-prod` | Deploy to Agent Engine (prod) |
+| `make health-check` | Smoke-test the deployed resource without redeploying |
+| `make rollback` | Redeploy a previous git ref: `make rollback REF=<tag> [ENV=prod\|dev]` |
 | `make logs` | Stream Cloud Logging |
-| `make traces` | Open Cloud Trace in browser |
+| `make traces` | List this agent's Cloud Trace spans |
 | `make setup-gcp` | One-time GCP bootstrap |
+| `make setup-monitoring` | One-time Cloud Monitoring dashboard + alert policy bootstrap |
 | `make pre-commit` | Run all pre-commit hooks |
 
 ## Environment variables
@@ -147,7 +150,7 @@ make deploy-prod          # deploy to prod
 | `GOOGLE_API_KEY` | Local dev | Not needed on GCP (uses ADC) |
 | `ANTHROPIC_API_KEY` | If provider=anthropic | |
 | `OPENAI_API_KEY` | If provider=openai | |
-| `SERPAPI_API_KEY` | No | Enables live web search; omit for stub |
+| `CLOUD_TRACE_ENABLED` | No | Export tool spans to Cloud Trace; set automatically on the deployed resource |
 
 ## Model providers
 
@@ -163,11 +166,19 @@ Set `MODEL_PROVIDER` in `.env`:
 ## Logging and traces
 
 ```bash
-make logs     # stream Cloud Logging (requires GOOGLE_CLOUD_PROJECT in .env)
-make traces   # open Cloud Trace console in browser
+make logs                                              # stream Cloud Logging
+uv run python deployment/scripts/read_traces.py        # list trace roots
+uv run python deployment/scripts/read_traces.py --spans # expand tool spans
 ```
 
-Agent Engine emits traces and structured logs automatically — no instrumentation needed.
+Both require `GOOGLE_CLOUD_PROJECT` in `.env`.
+
+All 26 tools are wrapped with `@instrument` (`agent/observability.py`), which logs a
+start/end/error event per call and opens a span. Logs reach Cloud Logging with no
+configuration; traces do not — `deployment/config.py` sets `CLOUD_TRACE_ENABLED` and
+`OTEL_EXPORTER_GCP_TRACE_PROJECT_ID` on the deployed resource, and without both, nothing is
+exported. Tool spans are children of ADK's `invoke_workflow` root, so use `--spans` to see
+them. See [AGENTS.md](AGENTS.md#observability) for the full event and field reference.
 
 ## Security
 
@@ -175,4 +186,4 @@ Prompt injection, jailbreak, and PII tests run automatically on every PR via [pr
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). AI assistants: read [CLAUDE.md](CLAUDE.md) for full project context and working instructions.
+See [CONTRIBUTING.md](CONTRIBUTING.md). AI assistants: read [AGENTS.md](AGENTS.md) for full project context and working instructions.
