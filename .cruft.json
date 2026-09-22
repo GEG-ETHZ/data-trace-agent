@@ -1,6 +1,6 @@
 {
   "template": "https://github.com/danielvogler/agent-deployment-template",
-  "commit": "19c44df4de8f0d8e167529f6a904c2389b9cf42c",
+  "commit": "7d172456c31b4231779f47bd2ea6c832121d3870",
   "checkout": null,
   "skip": [
     ".venv",
@@ -20,7 +20,8 @@
       "model_provider": "google",
       "python_version": "3.11",
       "open_source_license": "MIT",
-      "_template": "https://github.com/danielvogler/agent-deployment-template"
+      "_template": "https://github.com/danielvogler/agent-deployment-template",
+      "_commit": "7d172456c31b4231779f47bd2ea6c832121d3870"
     }
   },
   "directory": null

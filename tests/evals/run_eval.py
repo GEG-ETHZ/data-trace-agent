@@ -30,7 +30,20 @@ def main() -> None:
     env["OTEL_SDK_DISABLED"] = "true"
 
     result = subprocess.run(
-        ["npx", "--yes", "promptfoo@latest", "eval", "--config", str(CONFIG)],
+        # -j 2 matches eval.yml. promptfoo defaults to 4, which runs enough parallel
+        # agent and grader calls to trip Vertex quota; the model then answers a
+        # benign prompt with a "try again later" string and the suite fails for a
+        # reason that has nothing to do with the agent.
+        [
+            "npx",
+            "--yes",
+            "promptfoo@latest",
+            "eval",
+            "--config",
+            str(CONFIG),
+            "-j",
+            "2",
+        ],
         capture_output=False,
         env=env,
     )

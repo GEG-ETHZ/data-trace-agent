@@ -30,6 +30,14 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=500]
         exclude: uv\.lock
+      - id: detect-private-key
+
+  # uv.lock is committed (see .gitignore) and is written by `uv sync` during generation.
+  # This keeps it in step with pyproject.toml afterwards.
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.12.17
+    hooks:
+      - id: uv-lock
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
     rev: v0.22.1

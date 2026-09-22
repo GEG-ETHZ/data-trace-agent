@@ -4,6 +4,13 @@ on:
   pull_request:
     branches: [main]
 
+# The GITHUB_TOKEN scope is otherwise whatever the org default is -- a setting held
+# outside this repo, not versioned with it, and changeable without a commit. A
+# permissions block replaces the scope set rather than adding to it, so this reduces a
+# write-capable token to a read-only one. Widen per job, never here.
+permissions:
+  contents: read
+
 jobs:
   promptfoo:
     name: Prompt Security Evaluation
@@ -29,9 +36,19 @@ jobs:
       - run: uv sync
 
       - name: Run promptfoo evaluation
-        run: npx --yes promptfoo@latest eval --config tests/evals/promptfoo.yaml --ci
+        # Pinned rather than @latest: an unpinned npx resolves at run time, so a
+        # promptfoo release can change eval results — or what executes — without a commit
+        # here. Bump it deliberately and re-baseline the threshold in promptfoo.yaml.
+        run: npx --yes promptfoo@0.123.1 eval --config tests/evals/promptfoo.yaml --ci
         env:
           PROMPTFOO_DISABLE_TELEMETRY: "1"
+          # The ADK's OpenTelemetry instrumentation detaches a context token from a
+          # different context than the one it was created in when driven from promptfoo's
+          # async python worker, raising `ValueError: <Token ...> was created in a
+          # different Context` and wedging the worker until promptfoo's 300s timeout.
+          # run_eval.py already sets this for the local path; CI was missing it, so the
+          # eval was flaky here and nowhere else.
+          OTEL_SDK_DISABLED: "true"
           MODEL_PROVIDER: google
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
 

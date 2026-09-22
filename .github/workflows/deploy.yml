@@ -25,6 +25,9 @@ on:
         required: false
         type: string
 
+# Nothing here writes through GITHUB_TOKEN: the GCP credential is a secret, not OIDC.
+# Moving this workflow to Workload Identity Federation means adding `id-token: write`
+# here -- without it, google-github-actions/auth fails to mint a token.
 permissions:
   contents: read
 

@@ -8,6 +8,13 @@ on:
   schedule:
     - cron: "0 9 * * 1" # Every Monday 09:00 UTC
 
+# The GITHUB_TOKEN scope is otherwise whatever the org default is -- a setting held
+# outside this repo, not versioned with it, and changeable without a commit. A
+# permissions block replaces the scope set rather than adding to it, so this reduces a
+# write-capable token to a read-only one. Widen per job, never here.
+permissions:
+  contents: read
+
 jobs:
   cruft-check:
     name: Template drift check (non-blocking)
