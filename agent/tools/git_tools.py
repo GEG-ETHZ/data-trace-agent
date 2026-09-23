@@ -32,13 +32,18 @@ import logging
 import os
 import re
 import shutil
+import signal
+import subprocess
 import tempfile
+import time
 import urllib.parse
 from typing import Any, cast
 
 import git
 import yaml
 from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
+from git.cmd import Git
+from git.exc import UnsafeProtocolError
 from google.adk.tools import ToolContext
 
 from agent.observability import instrument
@@ -54,6 +59,13 @@ _REGISTRY_PATH_KEY = "registry_path"
 _REGISTRY_META_KEY = "registry_metadata"
 _REGISTRY_CONFIG_KEY = "registry_config"
 _REGISTRY_REMOTES_KEY = "registry_remotes"
+
+# Agent Engine killed the worker ~70 s into a hung clone; a whole git operation
+# must give up well before that and return an ERROR instead.
+_GIT_TIMEOUT_SECONDS = 45
+# Blobs above this size are neither downloaded nor checked out. Project repos can
+# carry multi-GB data archives committed to git; the agent only reads metadata.
+_MAX_BLOB_BYTES = 10 * 1024 * 1024
 
 
 def _get_repo(tool_context: ToolContext) -> Repo:
@@ -205,6 +217,151 @@ def _redact_credentials(text: str) -> str:
     return re.sub(r"(https?://)[^/@\s]+@", r"\1***@", text)
 
 
+def _git_deadline() -> float:
+    return time.monotonic() + _GIT_TIMEOUT_SECONDS
+
+
+def _run_git(args: list[str], cwd: str | None, deadline: float) -> str:
+    """Run ``git <args>`` and return stdout, failing fast instead of hanging.
+
+    Git never prompts for credentials, and the whole process group (git plus the
+    helpers it spawns, such as ``git-remote-https``) is killed at ``deadline``.
+    Raises ``GitCommandError`` with credentials redacted.
+    """
+    command = [_redact_credentials(part) for part in ["git", *args]]
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise GitCommandError(command, "timed out", "git timed out before starting")
+
+    proc = subprocess.Popen(
+        ["git", *args],
+        cwd=cwd,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=remaining)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        raise GitCommandError(
+            command,
+            "timed out",
+            f"git timed out after {_GIT_TIMEOUT_SECONDS} s and was stopped",
+        ) from None
+
+    if proc.returncode != 0:
+        raise GitCommandError(command, proc.returncode, _redact_credentials(stderr))
+    return stdout
+
+
+def _sparse_exclude_pattern(path: str) -> str:
+    """Return a non-cone sparse-checkout pattern that excludes exactly ``path``."""
+    escaped = re.sub(r"([\\*?\[\]])", r"\\\1", path)
+    if escaped.endswith(" "):
+        escaped = escaped[:-1] + "\\ "
+    return f"!/{escaped}"
+
+
+def _large_blob_paths(repo_dir: str, rev: str, deadline: float) -> list[str]:
+    """Paths in ``rev`` whose blobs the partial clone left out for being too large.
+
+    ``rev-list --missing=print`` reports missing objects without fetching them.
+    """
+    listing = _run_git(
+        ["rev-list", "--objects", "--missing=print", "--no-walk", rev],
+        repo_dir,
+        deadline,
+    )
+    missing = {line[1:] for line in listing.splitlines() if line.startswith("?")}
+    if not missing:
+        return []
+
+    tree = _run_git(["ls-tree", "-r", "-z", rev], repo_dir, deadline)
+    paths = []
+    for entry in tree.split("\0"):
+        if not entry:
+            continue
+        meta, path = entry.split("\t", 1)
+        _mode, obj_type, oid = meta.split(" ")
+        if obj_type == "blob" and oid in missing:
+            paths.append(path)
+    return paths
+
+
+def _checkout_skipping_large_files(repo_dir: str, rev: str, deadline: float) -> None:
+    """Check out ``rev`` without downloading blobs the partial clone left out.
+
+    Skipped files stay listed in the index (marked skip-worktree) but are absent
+    from the working tree. A normal full clone has nothing missing, so it gets a
+    plain checkout and its sparse-checkout settings are left untouched.
+    """
+    if rev.startswith("-"):
+        raise ValueError(f"Invalid revision '{rev}'.")
+
+    large_paths = _large_blob_paths(repo_dir, rev, deadline)
+    sparse_enabled = _run_git(
+        ["config", "--type=bool", "--default=false", "--get", "core.sparseCheckout"],
+        repo_dir,
+        deadline,
+    ).strip()
+    if large_paths or sparse_enabled == "true":
+        _run_git(["config", "core.sparseCheckout", "true"], repo_dir, deadline)
+        _run_git(["config", "core.sparseCheckoutCone", "false"], repo_dir, deadline)
+        git_path = _run_git(
+            ["rev-parse", "--git-path", "info/sparse-checkout"], repo_dir, deadline
+        ).strip()
+        sparse_file = os.path.join(repo_dir, git_path)
+        os.makedirs(os.path.dirname(sparse_file), exist_ok=True)
+        patterns = ["/*", *(_sparse_exclude_pattern(p) for p in large_paths)]
+        with open(sparse_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(patterns) + "\n")
+
+    _run_git(
+        ["-c", "advice.detachedHead=false", "checkout", "--quiet", rev],
+        repo_dir,
+        deadline,
+    )
+
+
+def _partial_clone(url: str, dest: str, deadline: float) -> None:
+    """Clone ``url`` into ``dest`` without large blobs and without a checkout."""
+    Git.check_unsafe_protocols(url)
+    _run_git(
+        [
+            "clone",
+            f"--filter=blob:limit={_MAX_BLOB_BYTES}",
+            "--no-checkout",
+            "--",
+            url,
+            dest,
+        ],
+        None,
+        deadline,
+    )
+
+
+def _is_skipped_large_file(repo_dir: str, path: str) -> bool:
+    try:
+        status = _run_git(
+            ["--literal-pathspecs", "ls-files", "-t", "--", path],
+            repo_dir,
+            _git_deadline(),
+        )
+    except GitCommandError:
+        return False
+    return status.startswith("S ")
+
+
 def _resolve_repository_location(repo_location: str) -> str:
     """Resolve a repository location (local path or remote URL) to an absolute path."""
     repo_location = _resolve_clone_url(repo_location)
@@ -214,9 +371,14 @@ def _resolve_repository_location(repo_location: str) -> str:
 
     if _looks_like_remote_repo(repo_location):
         temp_dir = tempfile.mkdtemp(prefix="data_trace_agent_repo_")
+        deadline = _git_deadline()
         try:
-            Repo.clone_from(repo_location, temp_dir)
-        except GitCommandError as exc:
+            _partial_clone(repo_location, temp_dir, deadline)
+            branch = _run_git(
+                ["symbolic-ref", "--short", "HEAD"], temp_dir, deadline
+            ).strip()
+            _checkout_skipping_large_files(temp_dir, branch, deadline)
+        except (GitCommandError, UnsafeProtocolError, ValueError) as exc:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise ValueError(
                 "Cannot clone remote Git repository at "
@@ -906,8 +1068,13 @@ def find_commit_by_hash_string(
     try:
         repo = _get_repo(tool_context)
         # `-S` (pickaxe) is a `git log` option; iter_commits shells out to
-        # `git rev-list`, which does not accept it. Use git log directly.
-        output = repo.git.log("--all", "-S", hash_string, "--format=%H %s").strip()
+        # `git rev-list`, which does not accept it. Use git log directly. In a
+        # partial clone it may fetch skipped large blobs, hence the deadline.
+        output = _run_git(
+            ["log", "--all", "-S", hash_string, "--format=%H %s"],
+            str(repo.working_dir or repo.git_dir),
+            _git_deadline(),
+        ).strip()
         if output:
             return output
         return "No commits found with the given hash string."
@@ -927,7 +1094,9 @@ def checkout_commit(
         return "ERROR: tool_context is required."
     try:
         repo = _get_repo(tool_context)
-        repo.git.checkout(commit_hash)
+        _checkout_skipping_large_files(
+            str(repo.working_dir), commit_hash, _git_deadline()
+        )
         return f"Successfully checked out commit {commit_hash}."
     except GitCommandError as e:
         return f"ERROR: Could not checkout commit: {e}"
@@ -974,9 +1143,10 @@ def clone_repository_at_revision(
     """
     resolved_url = _resolve_clone_url(repo_url)
     temp_dir = tempfile.mkdtemp(prefix="data_trace_agent_repo_")
+    deadline = _git_deadline()
     try:
-        repo = Repo.clone_from(resolved_url, temp_dir)
-        repo.git.checkout(commit_hash)
+        _partial_clone(resolved_url, temp_dir, deadline)
+        _checkout_skipping_large_files(temp_dir, commit_hash, deadline)
         tool_context.state[_STATE_KEY] = temp_dir
         return (
             f"Successfully cloned '{_redact_credentials(repo_url)}' "
@@ -1107,6 +1277,13 @@ def read_file_content(
 
     full_path = os.path.join(working_dir, file_path)
     if not os.path.exists(full_path):
+        if _is_skipped_large_file(str(working_dir), file_path):
+            limit_mb = _MAX_BLOB_BYTES / (1024 * 1024)
+            return (
+                f"ERROR: '{file_path}' exists in the repository but was not "
+                f"downloaded: it is larger than {limit_mb:g} MB. Large files, such "
+                "as data archives committed to git, are skipped to keep clones fast."
+            )
         return f"ERROR: File not found at '{file_path}'."
 
     if os.path.isdir(full_path):
