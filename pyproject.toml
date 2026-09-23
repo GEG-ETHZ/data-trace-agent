@@ -46,13 +46,19 @@ dev = [
     "commitizen>=3.0.0",
     "pip-audit>=2.7.0",
 ]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "N"]
-ignore = ["E501"]
+# UP046/UP047 want PEP 695 generics (`def instrument[F](func: F) -> F`), which are 3.12+
+# syntax. This project's sources come from a cookiecutter template that must also render
+# and parse under Python 3.11, so they stay suppressed even when target-version is py312 —
+# without this, generating with python_version=3.12 produces a project that fails its own
+# `ruff check` on the first CI run. Safe to drop if you never intend to support 3.11.
+ignore = ["E501", "UP046", "UP047"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -66,12 +72,23 @@ venv = ".venv"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov=agent --cov-report=term-missing --cov-fail-under=75"
+# Covers deployment/ as well as agent/. deploy.py ships the pickled agent to production and
+# is the highest-blast-radius code here, so it belongs under the gate rather than outside it.
+addopts = "--cov=agent --cov=deployment --cov-report=term-missing --cov-fail-under=75"
+
+[tool.coverage.report]
+exclude_also = [
+    # argparse entry points in deploy.py / health_check.py. No import-based test can reach
+    # these, so counting them only depresses the number without saying anything useful.
+    "if __name__ == .__main__.:",
+]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
 version_scheme = "semver"
 tag_format = "v$version"
+# Read and write [project].version rather than carrying a second copy here; without a
+# provider, `cz bump` has no source of truth to read.
+version_provider = "pep621"
 update_changelog_on_bump = true
 changelog_incremental = true
-version_files = ["pyproject.toml:^version"]

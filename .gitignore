@@ -1,6 +1,10 @@
 # Environment and secrets
 .env
 .env.*
+# .env.* above matches .env.example, which is documentation and must ship: the
+# setup steps in README.md and CLAUDE.md both start with `cp .env.example .env`,
+# and without this negation a fresh clone has nothing to copy.
+!.env.example
 *.pem
 *.key
 gcp-sa-key.json

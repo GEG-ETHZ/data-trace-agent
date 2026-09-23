@@ -98,3 +98,49 @@ def test_deployment_config_service_account(monkeypatch):
     config = DeploymentConfig.from_env()
 
     assert config.service_account == "sa@proj.iam.gserviceaccount.com"
+
+
+def test_from_env_derives_service_account_from_the_project(monkeypatch):
+    """Omitting the SA must not fall back to the project's shared Reasoning Engine
+    Service Agent; setup_gcp.sh's agent-engine-sa is fully determined by the project."""
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("GCS_STAGING_BUCKET", "gs://bucket")
+    monkeypatch.delenv("AGENT_ENGINE_SERVICE_ACCOUNT", raising=False)
+
+    assert (
+        DeploymentConfig.from_env().service_account
+        == "agent-engine-sa@proj.iam.gserviceaccount.com"
+    )
+
+
+def test_from_env_falls_back_to_the_derived_service_account_when_empty(monkeypatch):
+    """An unset GitHub Actions variable arrives as "", which must not blank the SA."""
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("GCS_STAGING_BUCKET", "gs://bucket")
+    monkeypatch.setenv("AGENT_ENGINE_SERVICE_ACCOUNT", "")
+
+    assert (
+        DeploymentConfig.from_env().service_account
+        == "agent-engine-sa@proj.iam.gserviceaccount.com"
+    )
+
+
+def test_from_env_derives_staging_bucket_from_the_project(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.delenv("GCS_STAGING_BUCKET", raising=False)
+
+    assert DeploymentConfig.from_env().staging_bucket == "gs://proj-agent-staging"
+
+
+def test_from_env_accepts_a_bucket_without_the_gs_scheme(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("GCS_STAGING_BUCKET", "my-own-bucket")
+
+    assert DeploymentConfig.from_env().staging_bucket == "gs://my-own-bucket"
+
+
+def test_from_env_leaves_an_explicit_gs_uri_alone(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("GCS_STAGING_BUCKET", "gs://my-own-bucket")
+
+    assert DeploymentConfig.from_env().staging_bucket == "gs://my-own-bucket"
