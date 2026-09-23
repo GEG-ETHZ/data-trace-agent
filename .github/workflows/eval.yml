@@ -16,22 +16,22 @@ jobs:
     name: Prompt Security Evaluation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # 22, not 20: promptfoo requires >=22.22.0 and exits immediately below that.
           # The template has pinned 22 since before this project's cruft pin, so the
           # update had no diff to carry and this divergence survived the migration.
           node-version: "22"
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           ignore-nothing-to-cache: true
@@ -107,7 +107,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: promptfoo-results
           path: output.json
