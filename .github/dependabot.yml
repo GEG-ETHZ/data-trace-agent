@@ -1,0 +1,47 @@
+version: 2
+
+# Monthly and grouped, so this is roughly one pull request per ecosystem per month rather
+# than a drip of single-dependency PRs nobody reads. Security updates are not affected by
+# the schedule: they still arrive as soon as an advisory is published.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore
+    groups:
+      hooks:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    # GitHub already holds a new release for 3 days before offering it. Seven gives a bad
+    # release time to be yanked before it reaches a pull request here.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        patterns: ["*"]
+      # Runtime minor and patch updates are grouped; a runtime major arrives on its own so
+      # it gets a proper read. google-adk and the Agent Engine SDK move fast enough that a
+      # major buried in a group of twelve is how a deploy breaks.
+      runtime-dependencies:
+        dependency-type: production
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

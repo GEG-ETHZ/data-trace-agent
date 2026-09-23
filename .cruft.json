@@ -1,0 +1,28 @@
+{
+  "template": "https://github.com/danielvogler/agent-deployment-template",
+  "commit": "7d172456c31b4231779f47bd2ea6c832121d3870",
+  "checkout": null,
+  "skip": [
+    ".venv",
+    ".git",
+    "uv.lock"
+  ],
+  "context": {
+    "cookiecutter": {
+      "project_name": "Data Trace Agent",
+      "project_slug": "data-trace-agent",
+      "project_description": "An agent that links Git and DVC metadata with direct access to BigQuery and GCS to answer questions about the evolution and content of datasets.",
+      "author_name": "Philipp Schädle",
+      "author_email": "philipp.schaedle@gmail.com",
+      "github_org": "GEG-ETHZ",
+      "gcp_project_id": "geg-core-dev",
+      "gcp_location": "europe-west1",
+      "model_provider": "google",
+      "python_version": "3.11",
+      "open_source_license": "MIT",
+      "_template": "https://github.com/danielvogler/agent-deployment-template",
+      "_commit": "7d172456c31b4231779f47bd2ea6c832121d3870"
+    }
+  },
+  "directory": null
+}

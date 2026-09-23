@@ -4,6 +4,13 @@ on:
   pull_request:
     branches: [main]
 
+# The GITHUB_TOKEN scope is otherwise whatever the org default is -- a setting held
+# outside this repo, not versioned with it, and changeable without a commit. A
+# permissions block replaces the scope set rather than adding to it, so this reduces a
+# write-capable token to a read-only one. Widen per job, never here.
+permissions:
+  contents: read
+
 jobs:
   promptfoo:
     name: Prompt Security Evaluation
@@ -19,7 +26,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # 22, not 20: promptfoo requires >=22.22.0 and exits immediately below that.
+          # The template has pinned 22 since before this project's cruft pin, so the
+          # update had no diff to carry and this divergence survived the migration.
+          node-version: "22"
 
       - uses: astral-sh/setup-uv@v4
         with:
@@ -29,9 +39,23 @@ jobs:
       - run: uv sync
 
       - name: Run promptfoo evaluation
-        run: npx --yes promptfoo@latest eval --config tests/evals/promptfoo.yaml --ci
+        # Pinned rather than @latest: an unpinned npx resolves at run time, so a
+        # promptfoo release can change eval results — or what executes — without a commit
+        # here. Bump it deliberately and re-baseline the threshold in promptfoo.yaml.
+        # `uv run`, not bare `npx`: the python provider imports dotenv, and only `uv run`
+        # activates .venv for the whole subprocess tree promptfoo spawns.
+        # `-o output.json` is what the upload step below collects; without it that step
+        # silently uploaded nothing. `--ci` is not a promptfoo flag and never was.
+        run: uv run npx --yes promptfoo@0.123.1 eval --config tests/evals/promptfoo.yaml --no-progress-bar -j 2 -o output.json
         env:
           PROMPTFOO_DISABLE_TELEMETRY: "1"
+          # The ADK's OpenTelemetry instrumentation detaches a context token from a
+          # different context than the one it was created in when driven from promptfoo's
+          # async python worker, raising `ValueError: <Token ...> was created in a
+          # different Context` and wedging the worker until promptfoo's 300s timeout.
+          # run_eval.py already sets this for the local path; CI was missing it, so the
+          # eval was flaky here and nowhere else.
+          OTEL_SDK_DISABLED: "true"
           MODEL_PROVIDER: google
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
 

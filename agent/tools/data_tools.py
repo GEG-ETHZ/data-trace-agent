@@ -11,6 +11,8 @@ import pandas as pd
 import yaml
 from google.adk.tools import ToolContext
 
+from agent.observability import instrument
+
 
 def _apply_dvc_local_config(repo_path: str) -> None:
     """Write DVC workspace (local) config from the ``DVC_CONFIG_LOCAL`` env var.
@@ -64,6 +66,7 @@ def _resolve_pull_targets(repo_path: str, file_path: str) -> list[str]:
     return [file_path]
 
 
+@instrument
 def dvc_pull(
     file_path: str | None = None, tool_context: ToolContext | None = None
 ) -> str:
@@ -114,6 +117,7 @@ def dvc_pull(
         return f"ERROR: An unexpected error occurred: {e}"
 
 
+@instrument
 def inspect_parquet_file(
     file_path: str, tool_context: ToolContext | None = None
 ) -> str:
@@ -143,6 +147,7 @@ def inspect_parquet_file(
         return f"ERROR: Could not inspect Parquet file: {e}"
 
 
+@instrument
 def analyze_parquet_file(
     file_path: str, tool_context: ToolContext | None = None
 ) -> str:
@@ -177,6 +182,7 @@ def analyze_parquet_file(
         return f"ERROR: Could not analyze Parquet file: {e}"
 
 
+@instrument
 def dvc_list_files(tool_context: ToolContext | None = None) -> str:
     """
     List all files tracked by DVC in the repository.
@@ -207,6 +213,7 @@ def dvc_list_files(tool_context: ToolContext | None = None) -> str:
         return f"ERROR: An unexpected error occurred: {e}"
 
 
+@instrument
 def inspect_yaml_file(file_path: str, tool_context: ToolContext | None = None) -> str:
     """
     Inspect a YAML file and return its structure and a sample of the data.
@@ -243,6 +250,7 @@ def inspect_yaml_file(file_path: str, tool_context: ToolContext | None = None) -
         return f"ERROR: Could not inspect YAML file: {e}"
 
 
+@instrument
 def analyze_yaml_file(file_path: str, tool_context: ToolContext | None = None) -> str:
     """
     Perform a basic data analysis on a YAML file.
@@ -282,6 +290,7 @@ def analyze_yaml_file(file_path: str, tool_context: ToolContext | None = None) -
         return f"ERROR: Could not analyze YAML file: {e}"
 
 
+@instrument
 def list_files_in_directory(
     directory_path: str, tool_context: ToolContext | None = None
 ) -> str:
@@ -305,6 +314,7 @@ def list_files_in_directory(
         return f"ERROR: An unexpected error occurred: {e}"
 
 
+@instrument
 def dvc_remote_list(tool_context: ToolContext | None = None) -> str:
     """
     List configured DVC remotes to find data storage locations.

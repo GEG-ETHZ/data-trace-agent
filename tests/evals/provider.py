@@ -42,7 +42,11 @@ async def _run_agent(prompt: str) -> str:
         new_message=content,
     ):
         if event.is_final_response() and event.content and event.content.parts:
-            return event.content.parts[0].text or ""
+            # Join every part, not just the first. A thinking model emits a thought
+            # part ahead of the text one, so parts[0].text is empty and reading only
+            # it returns "" for a perfectly good answer -- an eval failure that comes
+            # and goes with the model's mood rather than the agent's behaviour.
+            return "".join(part.text or "" for part in event.content.parts)
     return ""
 
 

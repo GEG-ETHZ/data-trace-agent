@@ -4,11 +4,11 @@ This file is read automatically by AI coding assistants (Claude Code, Cursor, Gi
 
 ## What this project is
 
-**Data Trace Agent** is a [Google ADK](https://google.github.io/adk-docs/) agent deployed on [Vertex AI Agent Engine](https://cloud.google.com/vertex-ai/docs/agents/overview). It was generated from [agent-deployment-template](https://github.com/GEG-ETHZ/agent-deployment-template).
+**Data Trace Agent** is a [Google ADK](https://google.github.io/adk-docs/) agent deployed on [Vertex AI Agent Engine](https://cloud.google.com/vertex-ai/docs/agents/overview). It tracks [agent-deployment-template](https://github.com/danielvogler/agent-deployment-template) via cruft — see `.cruft.json`, and run `cruft update` to pull template changes.
 
 ## Installation and setup
 
-Prerequisites: Python 3.11+, `uv`, Node.js 20+, `gcloud` CLI
+Prerequisites: Python 3.11+, `uv`, Node.js 22+ (promptfoo requires >=22.22.0), `gcloud` CLI
 
 ```bash
 make install                  # install all dependencies
@@ -62,11 +62,16 @@ prompts/
 deployment/
   config.py           resolve_model() + DeploymentConfig
   deploy.py           deploy to Agent Engine (create or update)
+  monitoring/
+    dashboard.json    Cloud Monitoring dashboard (requests, latency, CPU, memory)
+    alerting/         error-rate and p95-latency alert policies
   scripts/
-    setup_gcp.sh      one-time GCP bootstrap
-    upload_secret.sh  upload a secret to Secret Manager
-    read_logs.sh      stream Cloud Logging
-    read_traces.sh    open Cloud Trace in browser
+    setup_gcp.sh          one-time GCP bootstrap
+    setup_monitoring.sh   one-time Cloud Monitoring bootstrap
+    upload_secret.sh      upload a secret to Secret Manager
+    health_check.py       smoke-test the deployed resource
+    read_logs.sh          stream Cloud Logging
+    read_traces.py        list Cloud Trace spans
 tests/
   unit/               pure function tests — no GCP, no network required
   evals/
@@ -90,9 +95,12 @@ tests/
 | `make pre-commit` | All pre-commit hooks |
 | `make deploy-dev` | Deploy to Agent Engine (dev) |
 | `make deploy-prod` | Deploy to Agent Engine (prod) |
+| `make health-check` | Smoke-test the deployed resource without redeploying |
+| `make rollback` | Redeploy a previous git ref: `make rollback REF=<tag> [ENV=prod\|dev]` |
 | `make logs` | Stream Cloud Logging |
-| `make traces` | Open Cloud Trace in browser |
+| `make traces` | List this agent's Cloud Trace spans |
 | `make setup-gcp` | One-time GCP bootstrap |
+| `make setup-monitoring` | One-time Cloud Monitoring dashboard + alert policy bootstrap |
 | `make upload-secret` | Upload a secret (e.g., GitLab deploy token) to Secret Manager |
 
 ## How to add a tool
@@ -111,8 +119,57 @@ tests/
 ## How to add a sub-agent
 
 1. Add an entry in `prompts/prompts.yaml`
-2. Define the agent in `agent/agent.py` using `Agent()` (standard ADK syntax)
-3. Wire to `root_agent` via `sub_agents=[new_agent]`
+2. Create `agent/agents/<name>_agent.py` defining the agent with `Agent()` (standard ADK
+   syntax), following the existing modules there
+3. Export it from `agent/agents/__init__.py`
+4. Wire to `root_agent` via `sub_agents=[...]` in `agent/agent.py`
+
+## Observability
+
+`agent/observability.py` applies structured JSON logging at the boundary this project
+controls — tool calls — rather than `Runner.run_async`, which Agent Engine's managed runtime
+drives internally and our code never touches in production.
+
+- **`@instrument`** — wraps a tool function (sync or async) and logs `<name>.start`,
+  `<name>.end` (with `duration_ms`) or `<name>.error` (with the exception message) as JSON,
+  and opens a span when tracing is on. Applied to all 26 tools across `agent/tools/`.
+- **`log_event(event_type, fields, severity="INFO")`** — one structured JSON line for anything
+  else worth recording. The Python log level derived from `severity` sets the LogEntry's own
+  severity, so `severity=ERROR` is filterable directly in Logs Explorer.
+- **`redact_pii(value)`** — recursively redacts emails, SSNs and card-shaped numbers.
+  `log_event` and `@instrument` both apply it, but it is defence in depth, not a licence to
+  log sensitive fields.
+- **`log_model_usage(event)`** — token counts from an ADK event's `usage_metadata`, for code
+  that iterates the event stream itself (the promptfoo eval provider does).
+
+**Logs need no configuration.** Agent Engine forwards container stdout/stderr to Cloud Logging
+and parses a JSON stdout line into a structured `jsonPayload`. `make logs` reads exactly those,
+scoped to this agent by `reasoning_engine_id` — the log names are shared by every reasoning
+engine in the project.
+
+**Traces do need configuration**, because nothing forwards spans. `deployment/config.py` sets
+two variables on the deployed resource, and neither is optional:
+
+| Variable | Effect |
+|---|---|
+| `CLOUD_TRACE_ENABLED` | Builds the OpenTelemetry tracer; without it `_build_tracer()` returns `None` and no span is ever emitted |
+| `OTEL_EXPORTER_GCP_TRACE_PROJECT_ID` | The project to export to. Without it the exporter falls back to `google.auth.default()`, which resolves no project inside the Agent Engine container, and every export fails with `INVALID_ARGUMENT: Invalid project id in name!` |
+
+Tracing is off by default so a local `make dev` writes only to stdout and needs no
+credentials; export `CLOUD_TRACE_ENABLED=true` to opt in locally. Telemetry never breaks a
+tool call: a missing library or unresolvable credentials is reported once on stderr and the
+tool runs on.
+
+`@instrument` spans are **children** of ADK's `invoke_workflow` root span, so `make traces`
+lists roots only — use `read_traces.py --spans` to expand them.
+
+> **If application logs seem to be missing, check the project's log sink first.** A disabled
+> `_Default` sink discards every non-audit entry however it was written, which looks exactly
+> like broken instrumentation.
+>
+> ```bash
+> gcloud logging sinks describe _Default --project=$GOOGLE_CLOUD_PROJECT   # disabled: true is the bug
+> ```
 
 ## Environment variables
 
@@ -137,7 +194,7 @@ tests/
 | `GOOGLE_API_KEY` | Local dev | — | Not needed on GCP (uses ADC) |
 | `ANTHROPIC_API_KEY` | If provider=anthropic | — | |
 | `OPENAI_API_KEY` | If provider=openai | — | |
-| `SERPAPI_API_KEY` | No | — | Enables live web search; omit for stub |
+| `CLOUD_TRACE_ENABLED` | No | off | Export `@instrument` spans to Cloud Trace; set on the deployed resource by `deploy.py` |
 
 ## Model providers
 
@@ -153,10 +210,60 @@ Set `MODEL_PROVIDER` in `.env`:
 ## Code conventions
 
 - **No `print()` in Python package code** — use `logging`
-- **Conventional commits**: `feat(scope): description` — enforced by commitizen
-- **Pre-commit hooks**: ruff (lint + format), pyright, detect-secrets, markdownlint
-  - Run `make pre-commit` before committing; never use `--no-verify`
-- **CHANGELOG**: update `CHANGELOG.md` under `[Unreleased]` for every user-facing change
+
+### Pre-commit (required — always fix before committing)
+
+```bash
+make pre-commit   # runs all hooks
+```
+
+Hooks: ruff (lint + format), pyright, detect-secrets, markdownlint.
+
+- If ruff fails: run `make format` then `make lint` — ruff autofixes most issues
+- If pyright fails: fix the type errors it reports
+- If detect-secrets fails: make sure you have not committed credentials
+- **Never use `git commit --no-verify`** — this bypasses safety checks
+
+### Conventional commits (enforced by commitizen hook)
+
+Format: `type(scope): description`
+
+```text
+feat(agent): add calendar lookup tool
+fix(prompts): correct safety guidelines for PII handling
+chore(deps): bump google-adk to 1.1.0
+docs(readme): update deployment instructions
+test(evals): add promptfoo test for jailbreak via roleplay
+refactor(deployment): simplify config dataclass
+```
+
+The commit-msg hook rejects non-conforming messages. `lint-pr.yml` checks the PR title
+separately, because a squash merge discards those commit subjects and uses the PR title.
+
+### CHANGELOG (update for every user-facing change)
+
+Add an entry under `[Unreleased]` in `CHANGELOG.md` before committing, in Keep a Changelog
+format:
+
+```markdown
+## [Unreleased]
+
+### Added
+- Calendar lookup tool powered by Google Calendar API
+
+### Fixed
+- Web search stub now includes query in snippet for easier local debugging
+```
+
+Run `uv run cz bump` to cut a release and move unreleased entries to a dated section.
+
+## Claude Code slash commands
+
+| Command | What it does |
+|---|---|
+| `/deploy` | Runs `make deploy-prod` and reports the resource name |
+| `/eval` | Runs `make eval` and summarises results |
+| `/logs` | Runs `make logs` and streams Cloud Logging output |
 
 ## CI/CD
 
@@ -165,7 +272,14 @@ Set `MODEL_PROVIDER` in `.env`:
 | `ci.yml` | push + PR | lint, format, typecheck, unit tests |
 | `security.yml` | push to main + weekly | CodeQL, pip-audit, secret scan |
 | `eval.yml` | PR to main | promptfoo red-team (90% pass threshold) |
-| `deploy.yml` | push to main | deploy to Agent Engine prod |
+| `lint-pr.yml` | PR opened/edited | PR title is a conventional commit — it becomes the squash subject |
+| `cruft-check.yml` | push + PR + weekly | template drift against `.cruft.json` (non-blocking) |
+| `deploy.yml` | manual only | deploy to Agent Engine, environment chosen as an input |
+
+`deploy.yml` is `workflow_dispatch`-only deliberately: it previously fired on every push to
+main with no dependency on `ci.yml`, so a red build still deployed against the live resource.
+Re-enabling push-triggered CD needs the runtime secrets configured, a `dev` GitHub Environment
+to exist (only `prod` does), and a `workflow_run` gate on `ci.yml`.
 
 Required GitHub Secrets: `GCP_SA_KEY`, `GOOGLE_CLOUD_PROJECT`, `GCS_STAGING_BUCKET`, `GOOGLE_API_KEY`  # pragma: allowlist secret
 Required GitHub Variables: `GOOGLE_CLOUD_LOCATION`, `MODEL_PROVIDER`, `AGENT_ENGINE_RESOURCE_NAME` (after first deploy)

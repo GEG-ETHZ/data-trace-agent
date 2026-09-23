@@ -1,5 +1,6 @@
-.PHONY: install dev lint format typecheck test test-unit eval \
-        deploy-dev deploy-prod logs traces setup-gcp pre-commit clean help
+.PHONY: install dev lint format typecheck test test-unit test-integration eval \
+        deploy-dev deploy-prod rollback health-check logs traces setup-gcp \
+        setup-monitoring upload-secret pre-commit clean help
 
 -include .env
 export
@@ -13,16 +14,21 @@ help:
 	@echo "  lint         Run ruff lint check"
 	@echo "  format       Run ruff formatter"
 	@echo "  typecheck    Run pyright type checker"
-	@echo "  test         Run all unit tests with coverage"
-	@echo "  test-unit    Run unit tests only"
-	@echo "  eval         Run promptfoo red-team evaluation"
-	@echo "  deploy-dev   Deploy to Agent Engine (dev)"
-	@echo "  deploy-prod  Deploy to Agent Engine (prod)"
-	@echo "  logs         Stream Cloud Logging output for this agent"
-	@echo "  traces       Open Cloud Trace in browser"
-	@echo "  setup-gcp    One-time GCP project bootstrap"
-	@echo "  pre-commit   Run all pre-commit hooks on all files"
-	@echo "  clean        Remove build artefacts and caches"
+	@echo "  test             Run all tests with coverage"
+	@echo "  test-unit        Run unit tests only"
+	@echo "  test-integration Run integration tests only"
+	@echo "  eval             Run promptfoo red-team evaluation"
+	@echo "  deploy-dev       Deploy to Agent Engine (dev)"
+	@echo "  deploy-prod      Deploy to Agent Engine (prod)"
+	@echo "  rollback         Redeploy a previous git ref: make rollback REF=<tag> [ENV=prod|dev]"
+	@echo "  health-check     Smoke-test the deployed resource without redeploying"
+	@echo "  logs             Stream Cloud Logging output for this agent"
+	@echo "  traces           List this agent's Cloud Trace spans"
+	@echo "  setup-gcp        One-time GCP project bootstrap"
+	@echo "  setup-monitoring One-time Cloud Monitoring dashboard + alert policy bootstrap"
+	@echo "  upload-secret    Upload a secret value to Secret Manager: make upload-secret NAME=<name> FILE=<path>"
+	@echo "  pre-commit       Run all pre-commit hooks on all files"
+	@echo "  clean            Remove build artefacts and caches"
 	@echo ""
 
 install:
@@ -46,6 +52,9 @@ test:
 test-unit:
 	uv run pytest tests/unit -v
 
+test-integration:
+	uv run pytest tests/integration -v --tb=short
+
 eval:
 	uv run python tests/evals/run_eval.py
 
@@ -55,17 +64,46 @@ deploy-dev:
 deploy-prod:
 	uv run python deployment/deploy.py --env prod
 
+# Agent Engine deploys are source-based (the agent is pickled), so there is no
+# image digest to roll back to. Rolling back means checking out a previous ref
+# and redeploying it against the SAME resource, which deploy.py updates in place.
+rollback:
+	@if [ -z "$(REF)" ]; then \
+		echo "Usage: make rollback REF=<tag> [ENV=prod|dev]"; \
+		exit 1; \
+	fi
+	@echo "Rolling back to $(REF) (env: $(or $(ENV),prod))..."
+	git fetch --tags --quiet
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	git checkout $(REF) && \
+	uv run python deployment/deploy.py --env $(or $(ENV),prod); \
+	status=$$?; \
+	git checkout "$$branch"; \
+	exit $$status
+
+health-check:
+	uv run python deployment/scripts/health_check.py
+
 logs:
 	bash deployment/scripts/read_logs.sh
 
 traces:
-	bash deployment/scripts/read_traces.sh
+	uv run python deployment/scripts/read_traces.py
 
 setup-gcp:
 	bash deployment/scripts/setup_gcp.sh
 
+setup-monitoring:
+	bash deployment/scripts/setup_monitoring.sh
+
+# Secret Manager names must be alphanumeric + underscores — Agent Engine rejects
+# hyphens despite its error message claiming otherwise.
 upload-secret:
-	bash deployment/scripts/upload_secret.sh
+	@if [ -z "$(NAME)" ] || [ -z "$(FILE)" ]; then \
+		echo "Usage: make upload-secret NAME=<secret_name> FILE=<path-to-file-with-value>"; \
+		exit 1; \
+	fi
+	bash deployment/scripts/upload_secret.sh "$(NAME)" "$(FILE)"
 
 pre-commit:
 	uv run pre-commit run --all-files

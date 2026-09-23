@@ -6,9 +6,11 @@ from __future__ import annotations
 
 from google.cloud import bigquery
 
+from agent.observability import instrument
 from agent.tools.response_models import BQQueryResponse
 
 
+@instrument
 def query_bigquery(
     query: str, project_id: str | None = None, location: str | None = None
 ) -> BQQueryResponse:

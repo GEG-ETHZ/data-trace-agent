@@ -6,6 +6,13 @@ on:
   schedule:
     - cron: "0 9 * * 1" # Every Monday 09:00 UTC
 
+# The GITHUB_TOKEN scope is otherwise whatever the org default is -- a setting held
+# outside this repo, not versioned with it, and changeable without a commit. A
+# permissions block replaces the scope set rather than adding to it, so this reduces a
+# write-capable token to a read-only one. Widen per job, never here.
+permissions:
+  contents: read
+
 jobs:
   codeql:
     name: CodeQL Analysis
@@ -58,7 +65,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Pinned to a commit SHA, not a tag and never @main: this step runs with repository
+      # read access in every generated project, so a moving ref means whatever is on that
+      # branch at run time executes here. Dependabot's github-actions ecosystem bumps the
+      # SHA and updates the comment.
       - name: TruffleHog OSS
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@f714bf454f350590f4a24c3ddb1aef02c35bf5b6 # v3.97.5
         with:
+          # The action is a shell wrapper around `docker run "${IMAGE}:${VERSION}"`, and
+          # VERSION defaults to `latest` -- so pinning the action SHA alone still pulls a
+          # floating scanner image at run time. This pins what actually executes. Keep it
+          # in step with the SHA above; goreleaser publishes the tag without the leading v.
+          version: "3.97.5"
           extra_args: --only-verified
