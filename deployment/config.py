@@ -133,6 +133,33 @@ def runtime_env_vars(project: str) -> dict:
     return env
 
 
+# The service account `setup_gcp.sh` creates, and the staging bucket it provisions.
+# Both are fully determined by the project id, so neither has to be restated in .env
+# -- keep these in step with SA_NAME and BUCKET in deployment/scripts/setup_gcp.sh.
+RUNTIME_SA_NAME = "agent-engine-sa"
+STAGING_BUCKET_SUFFIX = "-agent-staging"
+
+
+def default_service_account(project: str) -> str:
+    """The runtime identity `setup_gcp.sh` provisions for this project."""
+    return f"{RUNTIME_SA_NAME}@{project}.iam.gserviceaccount.com"
+
+
+def default_staging_bucket(project: str) -> str:
+    """The staging bucket `setup_gcp.sh` provisions for this project."""
+    return f"gs://{project}{STAGING_BUCKET_SUFFIX}"
+
+
+def normalise_bucket(value: str) -> str:
+    """Add the `gs://` scheme if the caller left it off.
+
+    `setup_gcp.sh` prints the bucket as a bare name while the docs show it with the
+    scheme, and Vertex wants a full `gs://` URI -- so accept either spelling rather
+    than making the difference matter.
+    """
+    return value if value.startswith("gs://") else f"gs://{value}"
+
+
 @dataclass
 class DeploymentConfig:
     project: str
@@ -141,22 +168,36 @@ class DeploymentConfig:
     resource_name: str | None
     agent_display_name: str
     gcs_dir_name: str
-    service_account: str | None
+    service_account: str
 
     @classmethod
     def from_env(cls) -> "DeploymentConfig":
+        """Build the config from the environment.
+
+        `GOOGLE_CLOUD_PROJECT` is the only required variable. The staging bucket and
+        the runtime service account are derived from it, matching what
+        `setup_gcp.sh` provisions, and the corresponding environment variables exist
+        only to override that for a renamed bucket or SA.
+        """
+        project = os.environ["GOOGLE_CLOUD_PROJECT"]
+        staging_bucket = os.getenv("GCS_STAGING_BUCKET")
+        service_account = os.getenv("AGENT_ENGINE_SERVICE_ACCOUNT")
         return cls(
-            project=os.environ["GOOGLE_CLOUD_PROJECT"],
+            project=project,
             location=os.getenv("GOOGLE_CLOUD_LOCATION", "europe-west1"),
-            staging_bucket=os.environ["GCS_STAGING_BUCKET"],
+            staging_bucket=(
+                normalise_bucket(staging_bucket)
+                if staging_bucket
+                else default_staging_bucket(project)
+            ),
             resource_name=os.getenv("AGENT_ENGINE_RESOURCE_NAME") or None,
             agent_display_name="Data Trace Agent",
             # Staging subfolder within the bucket; project-named so artifacts
             # land at <bucket>/data-trace-agent/ instead of the generic default.
             gcs_dir_name=_project_name(),
-            # Service account the deployed agent runs as. Its Application Default
-            # Credentials authenticate DVC's GCS remote pulls, so it needs read
-            # access to the DVC remote bucket(s). Omit to use the Agent Engine
-            # default service account.
-            service_account=os.getenv("AGENT_ENGINE_SERVICE_ACCOUNT") or None,
+            # Always set: omitting it silently falls back to the project's shared
+            # Reasoning Engine Service Agent. Its Application Default Credentials
+            # also authenticate DVC's GCS remote pulls, so it needs read access to
+            # the DVC remote bucket(s).
+            service_account=service_account or default_service_account(project),
         )
