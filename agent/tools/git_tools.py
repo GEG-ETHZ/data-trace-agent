@@ -350,16 +350,44 @@ def _partial_clone(url: str, dest: str, deadline: float) -> None:
     )
 
 
-def _is_skipped_large_file(repo_dir: str, path: str) -> bool:
+def _repo_relative(path: str) -> str:
+    normalized = os.path.normpath(path)
+    return "" if normalized == "." else normalized
+
+
+def _skipped_large_files(repo_dir: str, under: str) -> list[str]:
+    """Repo paths at or below ``under`` left out of the checkout for being too large."""
+    args = ["--literal-pathspecs", "ls-files", "-t", "-z", "--"]
+    prefix = _repo_relative(under)
+    if prefix:
+        args.append(prefix)
     try:
-        status = _run_git(
-            ["--literal-pathspecs", "ls-files", "-t", "--", path],
-            repo_dir,
-            _git_deadline(),
-        )
+        listing = _run_git(args, repo_dir, _git_deadline())
     except GitCommandError:
-        return False
-    return status.startswith("S ")
+        return []
+    return [entry[2:] for entry in listing.split("\0") if entry.startswith("S ")]
+
+
+def _not_downloaded_note() -> str:
+    return f"not downloaded: larger than {_MAX_BLOB_BYTES / (1024 * 1024):g} MB"
+
+
+def _describe_directory(
+    dir_path: str, on_disk: list[str], skipped_paths: list[str]
+) -> str:
+    """List a directory, including entries skipped by the partial checkout."""
+    prefix = _repo_relative(dir_path)
+    lines = list(on_disk)
+    marked_subdirs: set[str] = set()
+    for path in skipped_paths:
+        relative = path[len(prefix) + 1 :] if prefix else path
+        name, _, rest = relative.partition("/")
+        if not rest:
+            lines.append(f"{name}  ({_not_downloaded_note()})")
+        elif name not in on_disk and name not in marked_subdirs:
+            marked_subdirs.add(name)
+            lines.append(f"{name}/  (all files {_not_downloaded_note()})")
+    return f"'{dir_path}' is a directory. Contents:\n" + "\n".join(sorted(lines))
 
 
 def _resolve_repository_location(repo_location: str) -> str:
@@ -1277,21 +1305,24 @@ def read_file_content(
 
     full_path = os.path.join(working_dir, file_path)
     if not os.path.exists(full_path):
-        if _is_skipped_large_file(str(working_dir), file_path):
-            limit_mb = _MAX_BLOB_BYTES / (1024 * 1024)
+        skipped = _skipped_large_files(str(working_dir), file_path)
+        if _repo_relative(file_path) in skipped:
             return (
-                f"ERROR: '{file_path}' exists in the repository but was not "
-                f"downloaded: it is larger than {limit_mb:g} MB. Large files, such "
-                "as data archives committed to git, are skipped to keep clones fast."
+                f"ERROR: '{file_path}' exists in the repository but was "
+                f"{_not_downloaded_note()}. Large files, such as data archives "
+                "committed to git, are skipped to keep clones fast."
             )
+        if skipped:
+            return _describe_directory(file_path, [], skipped)
         return f"ERROR: File not found at '{file_path}'."
 
     if os.path.isdir(full_path):
         try:
-            entries = sorted(os.listdir(full_path))
-            return f"'{file_path}' is a directory. Contents:\n" + "\n".join(entries)
+            entries = os.listdir(full_path)
         except Exception as exc:
             return f"ERROR: Cannot list directory '{file_path}': {exc}"
+        skipped = _skipped_large_files(str(working_dir), file_path)
+        return _describe_directory(file_path, entries, skipped)
 
     try:
         with open(full_path, encoding="utf-8", errors="replace") as f:

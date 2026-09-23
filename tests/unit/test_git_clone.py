@@ -19,6 +19,7 @@ from agent.tools import git_tools
 
 _TEST_BLOB_LIMIT = 1024
 _LARGE_NAME = "data/big file*.zip"
+_LARGE_ONLY_DIR_FILE = "archives/old.zip"
 
 
 class _FakeToolContext:
@@ -63,7 +64,10 @@ def remote_with_large_file(tmp_path):
     _run(["git", "config", "user.name", "Test User"], work)
     (work / "data.dvc").write_text("outs:\n- md5: abc123\n  path: data\n")
     (work / "data").mkdir()
+    (work / "data" / "README.md").write_text("Raw experiment data.\n")
     (work / _LARGE_NAME).write_bytes(os.urandom(_TEST_BLOB_LIMIT * 4))
+    (work / "archives").mkdir()
+    (work / _LARGE_ONLY_DIR_FILE).write_bytes(os.urandom(_TEST_BLOB_LIMIT * 4))
     _run(["git", "add", "-A"], work)
     _run(["git", "commit", "-m", "add data archive"], work)
     commit_with_large = Repo(work).head.commit.hexsha
@@ -91,7 +95,7 @@ def test_clone_repository_at_revision_skips_large_files(
     assert os.path.exists(os.path.join(repo_dir, "data.dvc"))
     assert not os.path.exists(os.path.join(repo_dir, _LARGE_NAME))
     assert Repo(repo_dir).head.commit.hexsha == commit_with_large
-    assert len(_missing_blobs(repo_dir, commit_with_large)) == 1
+    assert len(_missing_blobs(repo_dir, commit_with_large)) == 2
 
 
 def test_clone_repository_at_revision_lists_and_explains_skipped_file(
@@ -106,6 +110,41 @@ def test_clone_repository_at_revision_lists_and_explains_skipped_file(
 
     assert _LARGE_NAME in listed.splitlines()
     assert "not downloaded" in content
+
+
+def test_directory_listing_includes_skipped_files(
+    small_blob_limit, remote_with_large_file
+):
+    url, commit_with_large, _head = remote_with_large_file
+    ctx = _ctx()
+    git_tools.clone_repository_at_revision(url, commit_with_large, ctx)
+
+    listing = git_tools.read_file_content("data/", tool_context=ctx)
+
+    lines = listing.splitlines()
+    skipped_lines = [line for line in lines if "big file*.zip" in line]
+    assert "README.md" in lines
+    assert len(skipped_lines) == 1
+    assert "not downloaded" in skipped_lines[0]
+
+
+def test_directory_listing_shows_folder_holding_only_skipped_files(
+    small_blob_limit, remote_with_large_file
+):
+    url, commit_with_large, _head = remote_with_large_file
+    ctx = _ctx()
+    git_tools.clone_repository_at_revision(url, commit_with_large, ctx)
+
+    root_listing = git_tools.read_file_content(".", tool_context=ctx)
+    archives_listing = git_tools.read_file_content("archives", tool_context=ctx)
+
+    archive_lines = [
+        line for line in root_listing.splitlines() if line.startswith("archives")
+    ]
+    assert len(archive_lines) == 1
+    assert "not downloaded" in archive_lines[0]
+    assert "old.zip" in archives_listing
+    assert "not downloaded" in archives_listing
 
 
 def test_clone_remote_repository_skips_large_files_at_head(
