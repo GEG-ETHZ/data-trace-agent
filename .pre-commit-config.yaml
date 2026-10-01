@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.8
+    rev: v0.16.9
     hooks:
       - id: ruff
         args: [--fix]
@@ -39,7 +39,7 @@ repos:
   # uv.lock is committed (see .gitignore) and is written by `uv sync` during generation.
   # This keeps it in step with pyproject.toml afterwards.
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.12.17
+    rev: 0.12.19
     hooks:
       - id: uv-lock
 
@@ -51,7 +51,7 @@ repos:
         exclude: CHANGELOG\.md
 
   - repo: https://github.com/commitizen-tools/commitizen
-    rev: v4.18.0
+    rev: v4.19.0
     hooks:
       - id: commitizen
         stages: [commit-msg]
